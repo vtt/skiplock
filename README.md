@@ -113,6 +113,8 @@ Skiplock supports cron jobs for running tasks periodically.  It fully supports t
       # ...
     end
     ```
+- to remove the cron schedule from the job, simply comment out the constant definition or delete the line then re-deploy the application; at startup, the cron jobs that were undefined will be removed automatically
+
 ## Retry system   
 ...
 ## Notification system    

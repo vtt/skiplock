@@ -1,7 +1,7 @@
 module Skiplock
   class Dispatcher
     def initialize(master: true)
-	    @executor = Concurrent::ThreadPoolExecutor.new(min_threads: Settings['min_threads'], max_threads: Settings['max_threads'], max_queue: Settings['max_threads'], idletime: 60, auto_terminate: true, fallback_policy: :discard)
+      @executor = Concurrent::ThreadPoolExecutor.new(min_threads: Settings['min_threads'], max_threads: Settings['max_threads'], max_queue: Settings['max_threads'], idletime: 60, auto_terminate: true, fallback_policy: :discard)
       @master = master
       @next_schedule_at = Time.now.to_f
       @running = false
@@ -13,7 +13,7 @@ module Skiplock
           @running = true
           sleep(0.1) while @running && !Rails.application.initialized?
           ActiveRecord::Base.connection_pool.with_connection do |connection|
-            connection.execute 'LISTEN skiplock'
+            connection.exec_query('LISTEN skiplock')
             if @master
               # reset retries schedules on startup
               Job.where('scheduled_at > NOW() AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL').update_all(scheduled_at: nil, updated_at: Time.now)
@@ -26,7 +26,7 @@ module Skiplock
                   unless connection.active?
                     connection.reconnect!
                     sleep(0.5)
-                    connection.execute 'LISTEN skiplock'
+                    connection.exec_query('LISTEN skiplock')
                     @next_schedule_at = Time.now
                   end
                   error = false
@@ -62,7 +62,7 @@ module Skiplock
               end
               sleep(0.1)
             end
-            connection.execute "UNLISTEN *"
+            connection.exec_query('UNLISTEN *')
           end
         end
       end
@@ -85,6 +85,7 @@ module Skiplock
         break
       end
     rescue Exception => e
+      puts e.inspect
       # TODO: Report exception
     ensure
       ActiveRecord::Base.connection_pool.checkin(connection)
