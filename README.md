@@ -97,9 +97,23 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```sql
     INSERT INTO skiplock.jobs(job_class, priority, scheduled_at, data) VALUES ('MyJob', 10, NOW() + INTERVAL '5 min', '{"arguments":[1,2,3]}');
     ```
-## Retry system   
-...
 ## Cron system
+Skiplock supports cron jobs for running tasks periodically.  It fully supports the cron syntax to specify the frequency of the jobs.  To setup a job with cron capability, simply assign a valid cron expression to constant CRON for the Job Class.
+- setup MyJob to run as cron job every hour at 30 minutes past
+    ```ruby
+    class MyJob < ActiveJob::Base
+      CRON = "30 * * * *"
+      # ...
+    end
+    ```
+- setup MyJob to run at midnight every Wednesday
+    ```
+    class MyJob < ActiveJob::Base
+      CRON = "0 0 * * 3"
+      # ...
+    end
+    ```
+## Retry system   
 ...
 ## Notification system    
 ...
