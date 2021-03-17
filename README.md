@@ -1,6 +1,6 @@
 # Skiplock
 
-Skiplock is a background job queuing system that greatly improves the performance and reliability of the job executions at the same time providing the same ACID guarantees as the rest of your data.  It is designed for Active Jobs with Ruby on Rails using PostgreSQL database adapter; but it can be modified easily to work with other frameworks.
+Skiplock is a background job queuing system that improves the performance and reliability of the job executions while providing the same ACID guarantees as the rest of your data.  It is designed for Active Jobs with Ruby on Rails using PostgreSQL database adapter, but it can be modified to work with other frameworks easily.
 
 It only uses the **LISTEN/NOTIFY/SKIP LOCKED** features provided natively on PostgreSQL 9.2+ to efficiently and reliably dispatch jobs to worker processes and threads ensuring that a job can be completed successfully only once.  No other polling or timer is needed.
 
@@ -17,19 +17,19 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
 2. Install the gem:
 
     ```bash
-    bundle install
+    $ bundle install
     ```
 
 3. Run the Skiplock install generator. This will generate a configuration file and database migration to store the job records:
 
     ```bash
-    rails g skiplock:install
+    $ rails g skiplock:install
     ```
 
 4. Run the migration:
 
     ```bash
-    rails db:migrate
+    $ rails db:migrate
     ```
 
 ## Configuration
@@ -106,9 +106,9 @@ Skiplock supports cron jobs for running tasks periodically.  It fully supports t
       # ...
     end
     ```
-- setup MyJob to run at midnight every Wednesday
-    ```
-    class MyJob < ActiveJob::Base
+- setup MyJob to run at midnight every Wednesdays
+    ```ruby
+    class CleanupJob < ApplicationJob
       CRON = "0 0 * * 3"
       # ...
     end
