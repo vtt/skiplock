@@ -1,6 +1,6 @@
 # Skiplock
 
-Skiplock is a background job queuing system that improves the performance and reliability of the job executions while providing the same ACID guarantees as the rest of your data.  It is designed for Active Jobs with Ruby on Rails using PostgreSQL database adapter, but it can be modified to work with other frameworks easily.
+`Skiplock` is a background job queuing system that improves the performance and reliability of the job executions while providing the same ACID guarantees as the rest of your data.  It is designed for Active Jobs with Ruby on Rails using PostgreSQL database adapter, but it can be modified to work with other frameworks easily.
 
 It only uses the `LISTEN/NOTIFY/SKIP LOCKED` features provided natively on PostgreSQL 9.5+ to efficiently and reliably dispatch jobs to worker processes and threads ensuring that each job can be completed successfully **only once**.  No other polling or timer is needed.
 
@@ -14,7 +14,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
 
 ## Installation
 
-1. Add `skiplock` to your application's Gemfile:
+1. Add `Skiplock` to your application's Gemfile:
 
     ```ruby
     gem 'skiplock'
@@ -26,7 +26,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     $ bundle install
     ```
 
-3. Run the Skiplock install generator. This will generate a configuration file and database migration to store the job records:
+3. Run the `Skiplock` install generator. This will generate a configuration file and database migration to store the job records:
 
     ```bash
     $ rails g skiplock:install
@@ -46,7 +46,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     # config/application.rb
     config.active_job.queue_adapter = :skiplock
     ```
-2. Skiplock configuration
+2. `Skiplock` configuration
     ```yaml
     # config/skiplock.yml
     ---
@@ -104,7 +104,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     INSERT INTO skiplock.jobs(job_class,priority,scheduled_at,data) VALUES ('MyJob',10,NOW()+INTERVAL '5 min','{"arguments":[1,2,3]}');
     ```
 ## Cron system
-Skiplock provides the capability to setup cron jobs for running tasks periodically.  It fully supports the cron syntax to specify the frequency of the jobs.  To setup a cron job, simply assign a valid cron schedule to the constant `CRON` for the Job Class.
+`Skiplock` provides the capability to setup cron jobs for running tasks periodically.  It fully supports the cron syntax to specify the frequency of the jobs.  To setup a cron job, simply assign a valid cron schedule to the constant `CRON` for the Job Class.
 - setup `MyJob` to run as cron job every hour at 30 minutes past
 
     ```ruby
@@ -123,7 +123,7 @@ Skiplock provides the capability to setup cron jobs for running tasks periodical
 - to remove the cron schedule from the job, simply comment out the constant definition or delete the line then re-deploy the application. At startup, the cron jobs that were undefined will be removed automatically
 
 ## Retry system
-Skiplock fully supports ActiveJob built-in retry system.  It also has its own retry system for fallback.  To use ActiveJob retry system, define the rescue blocks per ActiveJob's documentation.
+`Skiplock` fully supports ActiveJob built-in retry system.  It also has its own retry system for fallback.  To use ActiveJob retry system, define the rescue blocks per ActiveJob's documentation.
 - configures `MyJob` to retry at maximum 20 attempts on StandardError with fixed delay of 5 seconds
     ```ruby
     class MyJob < ActiveJob::Base

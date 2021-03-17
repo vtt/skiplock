@@ -14,6 +14,8 @@ module Skiplock
           ActiveRecord::Base.connection_pool.with_connection do |connection|
             connection.exec_query('LISTEN skiplock')
             if @master
+              # reset orphaned jobs to be retried on startup
+              Job.where(running: true).update_all(running: false)
               # reset retries schedules on startup
               Job.where('scheduled_at > NOW() AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL').update_all(scheduled_at: nil, updated_at: Time.now)
               Cron.setup
