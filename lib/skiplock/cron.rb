@@ -10,6 +10,7 @@ module Skiplock
         time = self.next_schedule_at(cron)
         if time
           job.cron = cron
+          job.running = false
           job.scheduled_at = Time.at(time)
           job.save!
           cronjobs << j.name

@@ -4,13 +4,12 @@ module Skiplock
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: Settings['min_threads'], max_threads: Settings['max_threads'], max_queue: Settings['max_threads'], idletime: 60, auto_terminate: true, fallback_policy: :discard)
       @master = master
       @next_schedule_at = Time.now.to_f
-      @running = false
+      @running = true
     end
     
     def run
       Thread.new do
         Rails.application.reloader.wrap do
-          @running = true
           sleep(0.1) while @running && !Rails.application.initialized?
           ActiveRecord::Base.connection_pool.with_connection do |connection|
             connection.exec_query('LISTEN skiplock')
@@ -85,7 +84,6 @@ module Skiplock
         break
       end
     rescue Exception => e
-      puts e.inspect
       # TODO: Report exception
     ensure
       ActiveRecord::Base.connection_pool.checkin(connection)

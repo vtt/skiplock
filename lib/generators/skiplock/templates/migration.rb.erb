@@ -11,6 +11,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
       t.integer   :executions
       t.jsonb     :exception_executions
       t.jsonb     :data
+      t.boolean   :running, null: false, default: false
       t.timestamp :expired_at
       t.timestamp :finished_at
       t.timestamp :scheduled_at
@@ -26,8 +27,8 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
       $$ LANGUAGE plpgsql
     )
     execute "CREATE TRIGGER notify_job AFTER INSERT OR UPDATE ON skiplock.jobs FOR EACH ROW EXECUTE PROCEDURE skiplock.notify()"
-    execute "CREATE INDEX jobs_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE expired_at IS NULL AND finished_at IS NULL"
-    execute "CREATE INDEX jobs_retry_index ON skiplock.jobs(scheduled_at) WHERE executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL"
+    execute "CREATE INDEX jobs_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE running = 'f' AND expired_at IS NULL AND finished_at IS NULL"
+    execute "CREATE INDEX jobs_retry_index ON skiplock.jobs(scheduled_at) WHERE running = 'f' AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL"
     execute "CREATE INDEX jobs_cron_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE cron IS NOT NULL AND finished_at IS NULL"
     execute "CREATE UNIQUE INDEX jobs_unique_cron_index ON skiplock.jobs (job_class) WHERE cron IS NOT NULL"
   end

@@ -10,8 +10,11 @@ module Skiplock
     # Return: Attributes hash of the Job if it was executed; otherwise returns the next Job's schedule time in FLOAT
     def self.dispatch(connection: ActiveRecord::Base.connection)
       connection.exec_query('BEGIN')
-      job = connection.exec_query("SELECT * FROM #{self.table_name} WHERE expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
-      if job && job['scheduled_at'].to_f <= Time.now.to_f
+      job = connection.exec_query("SELECT * FROM #{self.table_name} WHERE running = 'f' AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
+      if job && job['scheduled_at'].to_f <= Time.now.to_f  # found job ready to perform
+        # update the job to mark it in progress in case database server goes down during job execution
+        connection.exec_query("UPDATE #{self.table_name} SET running = 't' WHERE id = '#{job['id']}'")
+        connection.exec_query('END') # close the transaction commit the state of job in progress
         executions = (job['executions'] || 0) + 1
         exceptions = job['exception_executions'] ? JSON.parse(job['exception_executions']) : {}
         data = job['data'] ? JSON.parse(job['data']) : {}
@@ -25,31 +28,31 @@ module Skiplock
           # TODO: report exception
           exceptions["[#{ex.class.name}]"] = (exceptions["[#{ex.class.name}]"] || 0) + 1 unless exceptions.key?('activejob_retry')
           if executions >= Settings['max_retries'] || exceptions.key?('activejob_retry')
-            connection.exec_query("UPDATE #{self.table_name} SET executions = #{executions}, exception_executions = '#{connection.quote_string(exceptions.to_json.to_s)}', expired_at = NOW(), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
+            connection.exec_query("UPDATE #{self.table_name} SET running = 'f', executions = #{executions}, exception_executions = '#{connection.quote_string(exceptions.to_json.to_s)}', expired_at = NOW(), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
           else
             timestamp = Time.now + (5 * 2**executions)
-            connection.exec_query("UPDATE #{self.table_name} SET executions = #{executions}, exception_executions = '#{connection.quote_string(exceptions.to_json.to_s)}', scheduled_at = TO_TIMESTAMP(#{timestamp.to_f}), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
+            connection.exec_query("UPDATE #{self.table_name} SET running = 'f', executions = #{executions}, exception_executions = '#{connection.quote_string(exceptions.to_json.to_s)}', scheduled_at = TO_TIMESTAMP(#{timestamp.to_f}), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
           end
         elsif exceptions.key?('activejob_retry')
-          connection.exec_query("UPDATE #{self.table_name} SET executions = #{job_data['executions']}, exception_executions = '#{connection.quote_string(job_data['exception_executions'].to_json.to_s)}', scheduled_at = TO_TIMESTAMP(#{job_data['scheduled_at'].to_f}), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
+          connection.exec_query("UPDATE #{self.table_name} SET running = 'f', executions = #{job_data['executions']}, exception_executions = '#{connection.quote_string(job_data['exception_executions'].to_json.to_s)}', scheduled_at = TO_TIMESTAMP(#{job_data['scheduled_at'].to_f}), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
         elsif job['cron']
           data['last_cron_run'] = Time.now.utc.to_s
           next_cron_at = Cron.next_schedule_at(job['cron'])
           if next_cron_at
-            connection.exec_query("UPDATE #{self.table_name} SET scheduled_at = TO_TIMESTAMP(#{next_cron_at}), executions = 1, exception_executions = NULL, data = '#{connection.quote_string(data.to_json.to_s)}', updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
+            connection.exec_query("UPDATE #{self.table_name} SET running = 'f', scheduled_at = TO_TIMESTAMP(#{next_cron_at}), executions = 1, exception_executions = NULL, data = '#{connection.quote_string(data.to_json.to_s)}', updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
           else
             connection.exec_query("DELETE FROM #{self.table_name} WHERE id = '#{job['id']}' RETURNING *").first
           end
         elsif Settings['purge_completion']
           connection.exec_query("DELETE FROM #{self.table_name} WHERE id = '#{job['id']}' RETURNING *").first
         else
-          connection.exec_query("UPDATE #{self.table_name} SET executions = #{executions}, exception_executions = NULL, finished_at = NOW(), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
+          connection.exec_query("UPDATE #{self.table_name} SET running = 'f', executions = #{executions}, exception_executions = NULL, finished_at = NOW(), updated_at = NOW() WHERE id = '#{job['id']}' RETURNING *").first
         end
       else
+        connection.exec_query('END')
         job ? job['scheduled_at'].to_f : Float::INFINITY
       end
     ensure
-      connection.exec_query('END')
       Thread.current[:skiplock_dispatch_data] = nil
     end
 
@@ -59,11 +62,11 @@ module Skiplock
         Thread.current[:skiplock_dispatch_data]['executions'] = job.executions
         Thread.current[:skiplock_dispatch_data]['exception_executions'] = job.exception_executions
         Thread.current[:skiplock_dispatch_data]['scheduled_at'] = Time.at(timestamp)
+        self.new(Thread.current[:skiplock_dispatch_data].slice(*self.column_names).merge(id: job.job_id))
       else
         timestamp = Time.at(timestamp) if timestamp
         Job.create!(id: job.job_id, job_class: job.class.name, queue_name: job.queue_name, locale: job.locale, timezone: job.timezone, priority: job.priority, executions: job.executions, data: { 'arguments' => job.arguments }, scheduled_at: timestamp)
       end
-      false
     end
   end
 end

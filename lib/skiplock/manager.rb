@@ -55,7 +55,6 @@ module Skiplock
         $stdout = Demux.new(logfile, STDOUT, timestamp: log_timestamp)
         errfile = File.open('log/skiplock.error.log', 'a')
         errfile.sync = true
-        Rails.logger.level = 0
         $stderr = Demux.new(errfile, STDERR, timestamp: log_timestamp)
         logger = ActiveSupport::Logger.new($stdout)
         logger.level = Rails.logger.level
@@ -66,8 +65,9 @@ module Skiplock
       shutdown = false
       Signal.trap("INT") { shutdown = true }
       Signal.trap("TERM") { shutdown = true }
-      Settings['workers'].times do
+      Settings['workers'].times do |w|
         fork do
+          Process.setproctitle("skiplock-worker[#{w+1}]")
           dispatcher = Dispatcher.new(master: false)
           thread = dispatcher.run
           loop do
@@ -80,6 +80,7 @@ module Skiplock
         end
       end
       sleep 0.1
+      Process.setproctitle("skiplock-master")
       dispatcher = Dispatcher.new
       thread = dispatcher.run
       loop do
