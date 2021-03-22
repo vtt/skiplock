@@ -31,7 +31,11 @@ module Skiplock
       Settings['max_threads'] = 20 if Settings['max_threads'] > 20
       Settings['min_threads'] = 0 if Settings['min_threads'] < 0
       Settings['workers'] = 0 if Settings['workers'] < 0
+      Settings['queues'].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) }
       Settings.freeze
+    rescue Exception => e
+      STDERR.puts "Invalid configuration 'config/skiplock.yml': #{e.message}"
+      exit
     end
 
     def self.standalone
@@ -46,6 +50,7 @@ module Skiplock
       puts "       Max threads: #{Settings['max_threads']}"
       puts "       Environment: #{Rails.env}"
       puts "           Logging: #{Settings['logging']}"
+      puts "            Queues: #{Settings['queues'].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}"
       puts "               PID: #{Process.pid}"
       puts "-"*(title.length)
       if Settings['logging']

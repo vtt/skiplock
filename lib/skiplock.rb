@@ -16,6 +16,10 @@ module Skiplock
     'max_threads' => 5,
     'max_retries' => 20,
     'purge_completion' => true,
+    'queues' => {
+      'default' => 100,
+      'mailers' => 999
+    },
     'workers' => 0
   }
 end

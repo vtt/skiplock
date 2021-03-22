@@ -1,6 +1,7 @@
 module Skiplock
   class Dispatcher
     def initialize(master: true, worker_num: nil, worker_pids: [])
+      @queues_order_query = Skiplock::Settings['queues'].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ')
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: Settings['min_threads'], max_threads: Settings['max_threads'], max_queue: Settings['max_threads'], idletime: 60, auto_terminate: true, fallback_policy: :discard)
       @master = master
       if @master
@@ -62,7 +63,7 @@ module Skiplock
                     if scheduled_at.to_f <= Time.now.to_f
                       @next_schedule_at = Time.now.to_f
                     elsif scheduled_at.to_f < @next_schedule_at
-                      @next_schedule_at = time.to_f
+                      @next_schedule_at = scheduled_at.to_f
                     end
                   end
                 end
@@ -94,7 +95,7 @@ module Skiplock
 
     def do_work
       while @running
-        result = Job.dispatch(worker_id: @worker.id)
+        result = Job.dispatch(queues_order_query: @queues_order_query, worker_id: @worker.id)
         next if result.is_a?(Hash)
         @next_schedule_at = result if result.is_a?(Float)
         break

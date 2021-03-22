@@ -2,10 +2,10 @@ module Skiplock
   class Job < ActiveRecord::Base
     self.table_name = 'skiplock.jobs'
 
-    # Return: Attributes hash of the Job if it was executed; otherwise returns the next Job's schedule time in FLOAT
-    def self.dispatch(worker_id: nil)
+    # Return: Skiplock::Job if it was executed; otherwise returns the next Job's schedule time in FLOAT
+    def self.dispatch(queues_order_query: nil, worker_id: nil)
       self.connection.exec_query('BEGIN')
-      job = self.find_by_sql("SELECT id, scheduled_at FROM #{self.table_name} WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
+      job = self.find_by_sql("SELECT id, scheduled_at FROM #{self.table_name} WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{queues_order_query ? 'CASE ' + queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
       if job.nil? || job.scheduled_at.to_f > Time.now.to_f
         self.connection.exec_query('END')
         return (job ? job.scheduled_at.to_f : Float::INFINITY)
@@ -54,7 +54,7 @@ module Skiplock
       end
       job
     ensure
-      Thread.current[:skiplock_dispatch_data] = nil
+      Thread.current[:skiplock_dispatch_job] = nil
     end
 
     def self.enqueue_at(activejob, timestamp)
