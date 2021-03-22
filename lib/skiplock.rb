@@ -6,6 +6,7 @@ require 'skiplock/dispatcher'
 require 'skiplock/manager'
 require 'skiplock/notification'
 require 'skiplock/job'
+require 'skiplock/worker'
 require 'skiplock/version'
 
 module Skiplock

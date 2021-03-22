@@ -65,10 +65,10 @@ module Skiplock
       shutdown = false
       Signal.trap("INT") { shutdown = true }
       Signal.trap("TERM") { shutdown = true }
-      Settings['workers'].times do |w|
-        fork do
-          Process.setproctitle("skiplock-worker[#{w+1}]")
-          dispatcher = Dispatcher.new(master: false)
+      worker_pids = []
+      Settings['workers'].times do |n|
+        worker_pids << fork do
+          dispatcher = Dispatcher.new(master: false, worker_num: n)
           thread = dispatcher.run
           loop do
             sleep 0.5
@@ -80,8 +80,7 @@ module Skiplock
         end
       end
       sleep 0.1
-      Process.setproctitle("skiplock-master")
-      dispatcher = Dispatcher.new
+      dispatcher = Dispatcher.new(worker_pids: worker_pids)
       thread = dispatcher.run
       loop do
         sleep 0.5
