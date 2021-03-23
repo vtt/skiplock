@@ -119,7 +119,7 @@ module Skiplock
     def do_work
       while @running
         result = Job.dispatch(queues_order_query: @queues_order_query, worker_id: @worker.id)
-        next if result.is_a?(Hash)
+        next if result.is_a?(Job)
         @next_schedule_at = result if result.is_a?(Float)
         break
       end
