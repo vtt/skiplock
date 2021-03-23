@@ -54,7 +54,11 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     min_threads: 1
     max_threads: 5
     max_retries: 20
+    notification: auto
     purge_completion: true
+    queues:
+      default: 200
+      mailers: 100
     workers: 0
     ```
     Available configuration options are:
@@ -62,8 +66,10 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     - **min_threads** (*integer*): sets minimum number of threads staying idle
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
     - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired (see Retry System for more details)
+    - **notification** (*enumeration*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, false`)
     - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months)
-    - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to 0 will enable **async mode**
+    - **queues** (*hash*): defines the set of queues with priorites; lower priority takes precedence
+    - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to **0** will enable **async mode**
     
     #### Async mode
     When **workers** is set to **0** then the jobs will be performed in the web server process using separate threads.  If using multi-worker cluster web server like Puma, then it should be configured as below:
@@ -93,16 +99,22 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```
 - Skiplock supports all ActiveJob features:
     ```ruby
-    MyJob.set(wait: 5.minutes, priority: 10).perform_later(1,2,3)
+    MyJob.set(queue: 'my_queue', wait: 5.minutes, priority: 10).perform_later(1,2,3)
     ```
 - Outside of Rails application, queue the jobs by inserting the job records directly to the database table eg:
     ```sql
     INSERT INTO skiplock.jobs(job_class) VALUES ('MyJob');
     ```
-- Or with scheduling, priority and arguments:
+- Or with scheduling, priority, queue and arguments:
     ```sql
-    INSERT INTO skiplock.jobs(job_class,priority,scheduled_at,data) VALUES ('MyJob',10,NOW()+INTERVAL '5 min','{"arguments":[1,2,3]}');
+    INSERT INTO skiplock.jobs(job_class,queue_name,priority,scheduled_at,data) VALUES ('MyJob','my_queue',10,NOW()+INTERVAL '5 min','{"arguments":[1,2,3]}');
     ```
+## Queues priority vs Job priority
+*Why do queues have priorities when jobs already have priorities?*
+- Jobs are only prioritized with other jobs from the same queue
+- Queues, on the other hand, are prioritized with other queues
+- Rails has built-in queues that dispatches jobs without priorities (eg. Mail Delivery will queue as **mailers** with no priority)
+
 ## Cron system
 `Skiplock` provides the capability to setup cron jobs for running tasks periodically.  It fully supports the cron syntax to specify the frequency of the jobs.  To setup a cron job, simply assign a valid cron schedule to the constant `CRON` for the Job Class.
 - setup `MyJob` to run as cron job every hour at 30 minutes past
@@ -144,7 +156,16 @@ Once the retry attempt limit configured in ActiveJob has been reached, the contr
 If the rescue blocks are not defined, then the built-in retry system of `skiplock` will kick in automatically.  The retrying schedule is using an exponential formula (5 + 2**attempt).  The `skiplock` configuration `max_retries` determines the the limit of attempts before the failing job is marked as expired.  The maximum retry limit can be set as high as 20; this allows up to 12 days of retrying before the job is marked as expired.
 
 ## Notification system
-...
+`Skiplock` can use existing exception notification library to notify errors and exceptions.  It supports `airbrake`, `bugsnag`, and `exception_notification`.  A customized function can also be called whenever an exception occurs; this can be configured in an initializer as below:
+```ruby
+  # config/initializers/skiplock.rb
+  Skiplock.on_error = -> (ex, previous = nil) do
+    if ex.backtrace != previous.try(:backtrace)
+      # sends custom email on new exceptions only
+      # the same repeated exceptions will only be sent once to avoid SPAM
+    end
+  end
+```
 
 ## Contributing
 
