@@ -72,7 +72,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to **0** will enable **async mode**
     
     #### Async mode
-    When **workers** is set to **0** then the jobs will be performed in the web server process using separate threads.  If using multi-worker cluster web server like Puma, then it should be configured as below:
+    When **workers** is set to **0** then the jobs will be performed in the web server process using separate threads.  If using multi-worker cluster mode web server like Puma, then it should be configured as below:
     ```ruby
     # config/puma.rb
     before_fork do
@@ -80,14 +80,10 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
       Skiplock::Manager.shutdown
     end
 
-    on_worker_boot do
-      # ...
-      Skiplock::Manager.start
-    end
-
-    on_worker_shutdown do
-      # ...
-      Skiplock::Manager.shutdown
+    after_worker_fork do |worker_index|
+      # restarts skiplock after all Puma workers have been started
+      # Skiplock runs in Puma master's process only
+      Skiplock::Manager.start if (worker_index + 1) == @options[:workers]
     end
     ```
 

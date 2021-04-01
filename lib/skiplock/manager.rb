@@ -1,6 +1,6 @@
 module Skiplock
   class Manager
-    def self.start(standalone: false, workers: nil, max_retries: nil, max_threads: nil, min_threads: nil, logging: nil)
+    def self.start(standalone: false, restart: false, workers: nil, max_retries: nil, max_threads: nil, min_threads: nil, logging: nil)
       unless Settings.frozen?
         load_settings
         Settings['logging'] = logging if logging
@@ -16,7 +16,7 @@ module Skiplock
         Settings['workers'] = 0 if Settings['workers'] < 0
         Settings.freeze
       end
-      return unless standalone || (caller.any?{|l| l =~ %r{/rack/}} && (Settings['workers'] == 0 || Rails.env.development?))
+      return unless standalone || restart || (caller.any?{|l| l =~ %r{/rack/}} && (Settings['workers'] == 0 || Rails.env.development?))
       if standalone
         self.standalone
       else
@@ -24,12 +24,15 @@ module Skiplock
         @thread = @dispatcher.run
         at_exit { self.shutdown }
       end
+      ActiveJob::Base.logger = nil
     end
     
     def self.shutdown(wait: true)
       if @dispatcher && @thread
         @dispatcher.shutdown(wait: wait)
         @thread.join
+        @dispatcher = nil
+        @thread = nil
       end
     end
 
