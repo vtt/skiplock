@@ -14,9 +14,10 @@ module Skiplock
         Settings['max_threads'] = 20 if Settings['max_threads'] > 20
         Settings['min_threads'] = 0 if Settings['min_threads'] < 0
         Settings['workers'] = 0 if Settings['workers'] < 0
+        Settings['workers'] = 1 if standalone && Settings['workers'] <= 0
         Settings.freeze
       end
-      return unless standalone || restart || (caller.any?{|l| l =~ %r{/rack/}} && (Settings['workers'] == 0 || Rails.env.development?))
+      return unless standalone || restart || (caller.any?{|l| l =~ %r{/rack/}} && Settings['workers'] == 0)
       if standalone
         self.standalone
       else
@@ -42,27 +43,35 @@ module Skiplock
       config = YAML.load_file('config/skiplock.yml') rescue {}
       Settings.merge!(config)
       Settings['queues'].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) } if Settings['queues'].is_a?(Hash)
-      case Settings['notification'].to_s.downcase
-      when 'auto'
+      @notification = Settings['notification'] = Settings['notification'].to_s.downcase
+      if @notification == 'auto'
         if defined?(Airbrake)
-          Skiplock.on_error = -> (ex, previous = nil) { Airbrake.notify_sync(ex) unless ex.backtrace == previous.try(:backtrace) }
+          @notification = 'airbrake'
         elsif defined?(Bugsnag)
-          Skiplock.on_error = -> (ex, previous = nil) { Bugsnag.notify(ex) unless ex.backtrace == previous.try(:backtrace) }
+          @notification = 'bugsnag'
         elsif defined?(ExceptionNotifier)
-          Skiplock.on_error = -> (ex, previous = nil) { ExceptionNotifier.notify_exception(ex) unless ex.backtrace == previous.try(:backtrace) }
+          @notification = 'exception_notification'
         else
-          puts "Unable to detect any known exception notification gem. Please define custom 'on_error' function and disable notification in 'config/skiplock.yml'"
+          puts "Unable to detect any known exception notification gem. Please define custom 'on_error' callback function and disable 'auto' notification in 'config/skiplock.yml'"
           exit
         end
+      end
+      case @notification
       when 'airbrake'
         raise 'airbrake gem not found' unless defined?(Airbrake)
-        Skiplock.on_error = -> (ex, previous = nil) { Airbrake.notify_sync(ex) unless ex.backtrace == previous.try(:backtrace) }
+        Skiplock.on_error do |ex, previous|
+          Airbrake.notify_sync(ex) unless ex.backtrace == previous.try(:backtrace)
+        end
       when 'bugsnag'
         raise 'bugsnag gem not found' unless defined?(Bugsnag)
-        Skiplock.on_error = -> (ex, previous = nil) { Bugsnag.notify(ex) unless ex.backtrace == previous.try(:backtrace) }
+        Skiplock.on_error do |ex, previous|
+          Bugsnag.notify(ex) unless ex.backtrace == previous.try(:backtrace)
+        end
       when 'exception_notification'
         raise 'exception_notification gem not found' unless defined?(ExceptionNotifier)
-        Skiplock.on_error = -> (ex, previous = nil) { ExceptionNotifier.notify_exception(ex) unless ex.backtrace == previous.try(:backtrace) }
+        Skiplock.on_error do |ex, previous|
+          ExceptionNotifier.notify_exception(ex) unless ex.backtrace == previous.try(:backtrace)
+        end
       end
     rescue Exception => e
       STDERR.puts "Invalid configuration 'config/skiplock.yml': #{e.message}"
@@ -88,7 +97,7 @@ module Skiplock
       puts title
       puts "-"*(title.length)
       puts "Purge completion: #{Settings['purge_completion']}"
-      puts "    Notification: #{Settings['notification']}"
+      puts "    Notification: #{Settings['notification']}#{(' (' + @notification + ')') if Settings['notification'] == 'auto'}"
       puts "     Max retries: #{Settings['max_retries']}"
       puts "     Min threads: #{Settings['min_threads']}"
       puts "     Max threads: #{Settings['max_threads']}"

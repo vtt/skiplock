@@ -1,3 +1,26 @@
 #!/usr/bin/env ruby
+require 'optparse'
+options = {}
+begin
+  op = OptionParser.new do |opts|
+    opts.banner = "Usage: #{File.basename($0)} [options]"
+    opts.on('-e', '--environment STRING', String, 'Rails environment')
+    opts.on('-l', '--logging STRING', String, 'Possible values: true, false, timestamp')
+    opts.on('-r', '--max_retries NUM', Integer, 'Number of maxixum retries')
+    opts.on('-t', '--max_threads NUM', Integer, 'Number of maximum threads')
+    opts.on('-T', '--min_threads NUM', Integer, 'Number of minimum threads')
+    opts.on('-w', '--workers NUM', Integer, 'Number of workers')
+    opts.on_tail('-h', '--help', 'Show this message') do
+      exit
+    end
+  end
+  op.parse!(into: options)
+rescue Exception => e
+  puts "\n#{e.message}\n\n" unless e.is_a?(SystemExit)
+  puts op
+  exit
+end
+env = options.delete(:environment)
+ENV['RAILS_ENV'] = env if env
 require File.expand_path("config/environment.rb")
-Skiplock::Manager.start(standalone: true)
+Skiplock::Manager.start(standalone: true, **options)

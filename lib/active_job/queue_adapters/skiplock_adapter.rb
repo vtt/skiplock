@@ -6,7 +6,7 @@ module ActiveJob
       end
 
       def enqueue(job)
-        enqueue_at(job, nil)
+        Skiplock::Job.enqueue(job)
       end
 
       def enqueue_at(job, timestamp)
