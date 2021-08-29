@@ -12,7 +12,7 @@ module Skiplock
     end
 
     def create_config_file
-      create_file 'config/skiplock.yml', Skiplock::Settings.to_yaml
+      create_file 'config/skiplock.yml', Skiplock::DEFAULT_CONFIG.to_yaml
     end
 
     def create_migration_file

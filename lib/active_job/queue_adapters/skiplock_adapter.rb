@@ -2,7 +2,7 @@ module ActiveJob
   module QueueAdapters
     class SkiplockAdapter
       def initialize
-        Skiplock::Manager.start
+        Rails.application.config.after_initialize { Skiplock::Manager.new }
       end
 
       def enqueue(job)

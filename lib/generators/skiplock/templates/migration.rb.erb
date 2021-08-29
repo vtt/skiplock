@@ -27,10 +27,11 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
       t.timestamps null: false, default: -> { 'now()' }
     end
     create_table 'skiplock.workers', id: :uuid do |t|
-      t.integer   :pid, null: false, index: true
-      t.integer   :ppid, index: true
+      t.integer   :pid, null: false
+      t.integer   :sid, null: false
       t.integer   :capacity, null: false
       t.string    :hostname, null: false, index: true
+      t.boolean   :master, null: false, default: false, index: true
       t.jsonb     :data
       t.timestamps null: false, index: true, default: -> { 'now()' }
     end    
@@ -74,7 +75,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
           ELSE
             record = NEW;
           END IF;
-          PERFORM pg_notify('skiplock::workers', CONCAT(TG_OP,',',record.id::TEXT,',',record.hostname,',',record.capacity,',',record.pid,',',record.ppid));
+          PERFORM pg_notify('skiplock::workers', CONCAT(TG_OP,',',record.id::TEXT,',',record.hostname,',',record.master::TEXT,',',record.capacity,',',record.pid,',',record.sid,',',CAST(EXTRACT(EPOCH FROM record.created_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.updated_at) AS FLOAT)::TEXT));
           RETURN NULL;
         END;
       $$ LANGUAGE plpgsql;
@@ -85,6 +86,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
     execute "CREATE INDEX jobs_retry_index ON skiplock.jobs(scheduled_at) WHERE running = FALSE AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL"
     execute "CREATE INDEX jobs_cron_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE cron IS NOT NULL AND finished_at IS NULL"
     execute "CREATE UNIQUE INDEX jobs_unique_cron_index ON skiplock.jobs (job_class) WHERE cron IS NOT NULL"
+    execute "CREATE UNIQUE INDEX workers_unique_master_index ON skiplock.workers(hostname) WHERE master = 't'"
   end
 
   def down

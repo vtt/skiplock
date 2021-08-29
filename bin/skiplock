@@ -6,9 +6,10 @@ begin
     opts.banner = "Usage: #{File.basename($0)} [options]"
     opts.on('-e', '--environment STRING', String, 'Rails environment')
     opts.on('-l', '--logging STRING', String, 'Possible values: true, false, timestamp')
-    opts.on('-r', '--max_retries NUM', Integer, 'Number of maxixum retries')
-    opts.on('-t', '--max_threads NUM', Integer, 'Number of maximum threads')
-    opts.on('-T', '--min_threads NUM', Integer, 'Number of minimum threads')
+    opts.on('-s', '--graceful-shutdown NUM', Integer, 'Number of seconds to wait for graceful shutdown')
+    opts.on('-r', '--max-retries NUM', Integer, 'Number of maxixum retries')
+    opts.on('-t', '--max-threads NUM', Integer, 'Number of maximum threads')
+    opts.on('-T', '--min-threads NUM', Integer, 'Number of minimum threads')
     opts.on('-w', '--workers NUM', Integer, 'Number of workers')
     opts.on_tail('-h', '--help', 'Show this message') do
       exit
@@ -20,7 +21,8 @@ rescue Exception => e
   puts op
   exit
 end
+options.transform_keys! { |k| k.to_s.gsub('-', '_').to_sym }
 env = options.delete(:environment)
 ENV['RAILS_ENV'] = env if env
 require File.expand_path("config/environment.rb")
-Skiplock::Manager.start(standalone: true, **options)
+Skiplock::Manager.new(options.merge(standalone: true))

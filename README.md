@@ -48,43 +48,49 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```
 2. `Skiplock` configuration
     ```yaml
-    # config/skiplock.yml
+    # config/skiplock.yml (default settings)
     ---
-    logging: timestamp
+    extensions: false
+    logging: true
     min_threads: 1
     max_threads: 5
     max_retries: 20
-    notification: auto
+    notification: none
     purge_completion: true
     queues:
       default: 200
-      mailers: 100
+      mailers: 999
     workers: 0
     ```
     Available configuration options are:
-    - **logging** (*enumeration*): sets the logging capability to **true** or **false**; setting to **timestamp** will enable logging with timestamps. The log files are: log/skiplock.log and log/skiplock.error.log
+    - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
+    - **logging** (*boolean*): enable or disable file logging capability; the log file is stored at log/skiplock.log
     - **min_threads** (*integer*): sets minimum number of threads staying idle
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
-    - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired (see Retry System for more details)
-    - **notification** (*enumeration*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, false`)
+    - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry System` for more details
+    - **notification** (*enumeration*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, none`).  Using `auto` will attempt to detect available gems in the application
     - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months)
     - **queues** (*hash*): defines the set of queues with priorities; lower priority takes precedence
     - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to **0** will enable **async mode**
-    
-    #### Async mode
-    When **workers** is set to **0** then the jobs will be performed in the web server process using separate threads.  If using multi-worker cluster mode web server like Puma, then it should be configured as below:
-    ```ruby
-    # config/puma.rb
-    # ...
-    on_worker_fork do |worker_index|
-      Skiplock::Manager.shutdown if worker_index == 1
-    end
 
-    after_worker_fork do |worker_index|
-      # restarts skiplock after all Puma workers have been started
-      Skiplock::Manager.start(restart: true) if defined?(Skiplock) && worker_index + 1 == @options[:workers]
-    end
+    #### **Async mode**
+    When **workers** is set to **0** then the jobs will be performed in the web server process using separate threads.  If using multi-worker cluster mode web server like Puma, then all the Puma workers will also be able to perform `Skiplock` jobs.
+
+    #### **Standalone mode**
+    `Skiplock` standalone mode can be launched by using the `skiplock` executable; command line options can be provided to override the `Skiplock` configuration file.  
     ```
+    $ bundle exec skiplock -h
+    Usage: skiplock [options]
+      -e, --environment STRING         Rails environment
+      -l, --logging STRING             Possible values: true, false, timestamp
+      -s, --graceful-shutdown NUM      Number of seconds to wait for graceful shutdown
+      -r, --max-retries NUM            Number of maxixum retries
+      -t, --max-threads NUM            Number of maximum threads
+      -T, --min-threads NUM            Number of minimum threads
+      -w, --workers NUM                Number of workers
+      -h, --help                       Show this message
+    ```
+
 ## Usage
 Inside the Rails application:
 - queue your job
@@ -159,10 +165,25 @@ If the `retry_on` block is not defined, then the built-in retry system of `skipl
     if ex.backtrace != previous.try(:backtrace)
       # sends custom email on new exceptions only
       # the same repeated exceptions will only be sent once to avoid SPAM
+      # NOTE: exceptions generated from Job perform method executions will not provide 'previous' exceptions
     end
   end
   # supports multiple on_error callbacks
 ```
+## ClassMethod extension
+`Skiplock` can add extension to allow all class methods to be performed as a background job; it is disabled in the default configuration.  To enable, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`.
+- Queue class method `generate_thumbnails` of class `Image` as background job to run as soon as possible
+  ```ruby
+  Image.skiplock.generate_thumbnails(height: 100, ratio: true)
+  ```
+- Queue class method `cleanup` of class `Session` as background job on queue `maintenance` to run after 5 minutes
+  ```ruby
+  Session.skiplock(wait: 5.minutes, queue: 'maintenance').cleanup
+  ```
+- Queue class method `charge` of class `Subscription` as background job to run tomorrow at noon
+  ```ruby
+  Subscription.skiplock(wait_until: Date.tomorrow.noon).charge(amount: 100)
+  ```
 
 ## Contributing
 

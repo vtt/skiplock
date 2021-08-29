@@ -4,29 +4,31 @@ require 'active_record'
 require 'skiplock/counter'
 require 'skiplock/cron'
 require 'skiplock/dispatcher'
+require 'skiplock/extension'
 require 'skiplock/job'
 require 'skiplock/manager'
 require 'skiplock/worker'
 require 'skiplock/version'
 
 module Skiplock
-  Settings = { 
-    'logging' => 'timestamp',
-    'min_threads' => 1,
-    'max_threads' => 5,
-    'max_retries' => 20,
-    'notification' => 'auto',
-    'purge_completion' => true,
-    'queues' => {
-      'default' => 200,
-      'mailers' => 100
-    },
-    'workers' => 0
-  }
-  mattr_reader :on_errors, default: []
+  DEFAULT_CONFIG = { 'extensions' => false, 'logging' => true, 'graceful_shutdown' => 15, 'min_threads' => 1, 'max_threads' => 5, 'max_retries' => 20, 'notification' => 'none', 'purge_completion' => true, 'queues' => { 'default' => 100, 'mailers' => 999 }, 'workers' => 0 }.freeze
+
+  def self.logger=(l)
+    @logger = l
+  end
+
+  def self.logger
+    @logger
+  end
 
   def self.on_error(&block)
-    @@on_errors << block
+    @on_errors ||= []
+    @on_errors << block
+    block
+  end
+
+  def self.on_errors
+    @on_errors || [].freeze
   end
 
   def self.table_name_prefix
