@@ -16,7 +16,6 @@ module Skiplock
         ActiveRecord::Base.connection_pool.with_connection do |connection|
           connection.exec_query('LISTEN "skiplock::jobs"')
           if @worker.master
-            Rails.application.eager_load! if Rails.env.development?
             Dir.mkdir('tmp/skiplock') unless Dir.exist?('tmp/skiplock')
             check_sync_errors
             Cron.setup

@@ -21,13 +21,15 @@ module Skiplock
       rescue Exception => ex
         Skiplock.logger.error(ex)
       end
-      end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      job_name = job.job_class
-      if job.job_class == 'Skiplock::Extension::ProxyJob'
-        target, method_name = ::YAML.load(job.data['arguments'].first)
-        job_name = "'#{target.name}.#{method_name}'"
+      unless ex
+        end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        job_name = job.job_class
+        if job.job_class == 'Skiplock::Extension::ProxyJob'
+          target, method_name = ::YAML.load(job.data['arguments'].first)
+          job_name = "'#{target.name}.#{method_name}'"
+        end
+        Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{job.id}) from queue '#{job.queue_name || 'default'}' in #{end_time - start_time} seconds"
       end
-      Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{job.id}) from queue '#{job.queue_name || 'default'}' in #{end_time - start_time} seconds"
       job.dispose(ex, purge_completion: purge_completion, max_retries: max_retries)
     ensure
       Thread.current[:skiplock_dispatch_job] = nil
@@ -57,6 +59,7 @@ module Skiplock
     def dispose(ex, purge_completion: true, max_retries: 20)
       dup = self.dup
       self.running = false
+      self.worker_id = nil
       self.updated_at = (Time.now > self.updated_at ? Time.now : self.updated_at + 1)
       if ex
         self.exception_executions["[#{ex.class.name}]"] = (self.exception_executions["[#{ex.class.name}]"] || 0) + 1 unless self.exception_executions.key?('activejob_retry')
@@ -80,6 +83,7 @@ module Skiplock
           self.scheduled_at = Time.at(next_cron_at)
           self.save!
         else
+          Skiplock.logger.error "[Skiplock] ERROR: Invalid CRON '#{self.cron}' for Job #{self.job_class}"
           self.delete
         end
       elsif purge_completion
@@ -90,7 +94,8 @@ module Skiplock
         self.save!
       end
       self
-    rescue
+    rescue Exception => e
+      Skiplock.logger.error(e)
       File.write("tmp/skiplock/#{self.id}", [dup, ex].to_yaml)
       nil
     end

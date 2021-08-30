@@ -11,7 +11,7 @@ require 'skiplock/worker'
 require 'skiplock/version'
 
 module Skiplock
-  DEFAULT_CONFIG = { 'extensions' => false, 'logging' => true, 'graceful_shutdown' => 15, 'min_threads' => 1, 'max_threads' => 5, 'max_retries' => 20, 'notification' => 'none', 'purge_completion' => true, 'queues' => { 'default' => 100, 'mailers' => 999 }, 'workers' => 0 }.freeze
+  DEFAULT_CONFIG = { 'extensions' => false, 'logfile' => 'log/skiplock.log', 'graceful_shutdown' => 15, 'min_threads' => 1, 'max_threads' => 5, 'max_retries' => 20, 'notification' => 'custom', 'purge_completion' => true, 'queues' => { 'default' => 100, 'mailers' => 999 }, 'workers' => 0 }.freeze
 
   def self.logger=(l)
     @logger = l
@@ -28,7 +28,7 @@ module Skiplock
   end
 
   def self.on_errors
-    @on_errors || [].freeze
+    @on_errors || []
   end
 
   def self.table_name_prefix

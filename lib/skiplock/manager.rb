@@ -7,10 +7,10 @@ module Skiplock
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config.merge!(config)
       Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
-      return unless @config[:standalone] || (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
+      return unless @config[:standalone] || (caller.any?{ |l| l =~ %r{/rack/} } && (@config[:workers] == 0 || Rails.env.development?))
       @config[:hostname] = `hostname -f`.strip
       do_config
-      banner
+      banner if @config[:standalone]
       cleanup_workers
       create_worker
       ActiveJob::Base.logger = nil
@@ -26,28 +26,29 @@ module Skiplock
         end
       end
     rescue Exception => ex
-      Skiplock.logger.error(ex)
+      @logger.error(ex)
     end
 
   private
 
     def banner
-      title = "[Skiplock] V#{Skiplock::VERSION} (Rails #{Rails::VERSION::STRING} | Ruby #{RUBY_VERSION}-p#{RUBY_PATCHLEVEL})"
+      title = "Skiplock #{Skiplock::VERSION} (Rails #{Rails::VERSION::STRING} | Ruby #{RUBY_VERSION}-p#{RUBY_PATCHLEVEL})"
       @logger.info "-"*(title.length)
       @logger.info title
       @logger.info "-"*(title.length)
-      @logger.info "ClassMethod Extensions: #{@config[:extensions]}"
+      @logger.info "ClassMethod extensions: #{@config[:extensions]}"
       @logger.info "      Purge completion: #{@config[:purge_completion]}"
-      @logger.info "          Notification: #{@config[:notification]}#{(' (' + @notification + ')') if @config[:notification] == 'auto'}"
+      @logger.info "          Notification: #{@config[:notification]}"
       @logger.info "           Max retries: #{@config[:max_retries]}"
       @logger.info "           Min threads: #{@config[:min_threads]}"
       @logger.info "           Max threads: #{@config[:max_threads]}"
       @logger.info "           Environment: #{Rails.env}"
-      @logger.info "               Logging: #{@config[:logging]}"
+      @logger.info "               Logfile: #{@config[:logfile] || '(disabled)'}"
       @logger.info "               Workers: #{@config[:workers]}"
       @logger.info "                Queues: #{@config[:queues].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}" if @config[:queues].is_a?(Hash)
       @logger.info "                   PID: #{Process.pid}"
       @logger.info "-"*(title.length)
+      @logger.warn "[Skiplock] Custom notification has no registered 'on_error' callback" if Skiplock.on_errors.count == 0
     end
 
     def cleanup_workers
@@ -78,21 +79,31 @@ module Skiplock
       @config[:min_threads] = 0 if @config[:min_threads] < 0
       @config[:workers] = 0 if @config[:workers] < 0
       @config[:workers] = 1 if @config[:standalone] && @config[:workers] <= 0
-      @config[:queues].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) } if @config[:queues].is_a?(Hash)
-      @notification = @config[:notification]
-      if @notification == 'auto'
-        if defined?(Airbrake)
-          @notification = 'airbrake'
-        elsif defined?(Bugsnag)
-          @notification = 'bugsnag'
-        elsif defined?(ExceptionNotifier)
-          @notification = 'exception_notification'
-        else
-          @logger.info "Unable to detect any known exception notification gem. Please define custom 'on_error' callback function and disable 'auto' notification in 'config/skiplock.yml'"
-          exit
+      @logger = ActiveSupport::Logger.new(STDOUT)
+      @logger.level = Rails.logger.level
+      Skiplock.logger = @logger
+      raise "Cannot create logfile '#{@config[:logfile]}'" if @config[:logfile] && !File.writable?(File.dirname(@config[:logfile]))
+      @config[:logfile] = nil if @config[:logfile].to_s.length == 0
+      if @config[:logfile]
+        @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(@config[:logfile])))
+        if @config[:standalone]
+          Rails.logger.reopen('/dev/null')
+          Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
         end
       end
-      case @notification
+      @config[:queues].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) } if @config[:queues].is_a?(Hash)
+      if @config[:notification] == 'auto'
+        if defined?(Airbrake)
+          @config[:notification] = 'airbrake'
+        elsif defined?(Bugsnag)
+          @config[:notification] = 'bugsnag'
+        elsif defined?(ExceptionNotifier)
+          @config[:notification] = 'exception_notification'
+        else
+          raise "Unable to detect any known exception notification library. Please define custom 'on_error' event callbacks and change to 'custom' notification in 'config/skiplock.yml'"
+        end
+      end
+      case @config[:notification]
       when 'airbrake'
         raise 'airbrake gem not found' unless defined?(Airbrake)
         Skiplock.on_error do |ex, previous|
@@ -108,16 +119,8 @@ module Skiplock
         Skiplock.on_error do |ex, previous|
           ExceptionNotifier.notify_exception(ex) unless ex.backtrace == previous.try(:backtrace)
         end
-      end
-      Skiplock.logger = ActiveSupport::Logger.new(STDOUT)
-      Skiplock.logger.level = Rails.logger.level
-      @logger = Skiplock.logger
-      if @config[:logging]
-        Skiplock.logger.extend(ActiveSupport::Logger.broadcast(::Logger.new('log/skiplock.log')))
-        if @config[:standalone]
-          Rails.logger.reopen('/dev/null')
-          Rails.logger.extend(ActiveSupport::Logger.broadcast(Skiplock.logger))
-        end
+      else
+        @config[:notification] = 'custom'
       end
       Skiplock.on_errors.freeze unless Skiplock.on_errors.frozen?
     end

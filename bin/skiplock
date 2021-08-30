@@ -5,7 +5,7 @@ begin
   op = OptionParser.new do |opts|
     opts.banner = "Usage: #{File.basename($0)} [options]"
     opts.on('-e', '--environment STRING', String, 'Rails environment')
-    opts.on('-l', '--logging STRING', String, 'Possible values: true, false, timestamp')
+    opts.on('-l', '--logfile STRING', String, 'Full path to logfile')
     opts.on('-s', '--graceful-shutdown NUM', Integer, 'Number of seconds to wait for graceful shutdown')
     opts.on('-r', '--max-retries NUM', Integer, 'Number of maxixum retries')
     opts.on('-t', '--max-threads NUM', Integer, 'Number of maximum threads')

@@ -50,12 +50,12 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```yaml
     # config/skiplock.yml (default settings)
     ---
-    extensions: false
-    logging: true
     min_threads: 1
     max_threads: 5
     max_retries: 20
-    notification: none
+    logfile: log/skiplock.log
+    notification: custom
+    extensions: false
     purge_completion: true
     queues:
       default: 200
@@ -63,12 +63,12 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     workers: 0
     ```
     Available configuration options are:
-    - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
-    - **logging** (*boolean*): enable or disable file logging capability; the log file is stored at log/skiplock.log
     - **min_threads** (*integer*): sets minimum number of threads staying idle
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
-    - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry System` for more details
-    - **notification** (*enumeration*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, none`).  Using `auto` will attempt to detect available gems in the application
+    - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry system` for more details
+    - **logfile** (*string*): path filename for skiplock logs; empty logfile will disable logging
+    - **notification** (*string*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, custom`); using `auto` will detect library if available.  See `Notification system` for more details
+    - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
     - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months)
     - **queues** (*hash*): defines the set of queues with priorities; lower priority takes precedence
     - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to **0** will enable **async mode**
@@ -82,7 +82,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     $ bundle exec skiplock -h
     Usage: skiplock [options]
       -e, --environment STRING         Rails environment
-      -l, --logging STRING             Possible values: true, false, timestamp
+      -l, --logfile STRING             Full path to logfile
       -s, --graceful-shutdown NUM      Number of seconds to wait for graceful shutdown
       -r, --max-retries NUM            Number of maxixum retries
       -t, --max-threads NUM            Number of maximum threads
@@ -158,17 +158,17 @@ If the retry attempt limit configured in ActiveJob has been reached, then the co
 If the `retry_on` block is not defined, then the built-in retry system of `skiplock` will kick in automatically.  The retrying schedule is using an exponential formula (5 + 2**attempt).  The `skiplock` configuration `max_retries` determines the the limit of attempts before the failing job is marked as expired.  The maximum retry limit can be set as high as 20; this allows up to 12 days of retrying before the job is marked as expired.
 
 ## Notification system
-`Skiplock` can use existing exception notification library to notify errors and exceptions.  It supports `airbrake`, `bugsnag`, and `exception_notification` as shown in the **Configuration** section above.  Custom function can also be called whenever an exception occurs; it can be configured in an initializer like below:
+`Skiplock` can use existing exception notification library to notify errors and exceptions.  It supports `airbrake`, `bugsnag`, and `exception_notification`.  Custom notification can also be called whenever an exception occurs; it can be configured in an initializer like below:
 ```ruby
   # config/initializers/skiplock.rb
   Skiplock.on_error do |ex, previous|
     if ex.backtrace != previous.try(:backtrace)
       # sends custom email on new exceptions only
       # the same repeated exceptions will only be sent once to avoid SPAM
-      # NOTE: exceptions generated from Job perform method executions will not provide 'previous' exceptions
+      # NOTE: exceptions generated from Job executions will not provide 'previous' exceptions
     end
   end
-  # supports multiple on_error callbacks
+  # supports multiple 'on_error' event callbacks
 ```
 ## ClassMethod extension
 `Skiplock` can add extension to allow all class methods to be performed as a background job; it is disabled in the default configuration.  To enable, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`.
