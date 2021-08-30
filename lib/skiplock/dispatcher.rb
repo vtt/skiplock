@@ -7,7 +7,7 @@ module Skiplock
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads], max_threads: @config[:max_threads], max_queue: @config[:max_threads], idletime: 60, auto_terminate: true, fallback_policy: :discard)
       @last_dispatch_at = 0
       @next_schedule_at = Time.now.to_f
-      Process.setproctitle("skiplock-#{@worker.master ? 'master[0]' : 'worker[' + @worker_num.to_s + ']'}") if @config[:standalone]
+      Process.setproctitle("skiplock-#{@worker.master ? 'master[0]' : 'worker[' + worker_num.to_s + ']'}") if @config[:standalone]
     end
     
     def run

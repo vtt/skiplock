@@ -25,6 +25,8 @@ module Skiplock
           @worker.delete
         end
       end
+    rescue Exception => ex
+      Skiplock.logger.error(ex)
     end
 
   private
