@@ -43,6 +43,7 @@ module Skiplock
       @logger.info "           Min threads: #{@config[:min_threads]}"
       @logger.info "           Max threads: #{@config[:max_threads]}"
       @logger.info "           Environment: #{Rails.env}"
+      @logger.info "              Loglevel: #{@config[:loglevel]}"
       @logger.info "               Logfile: #{@config[:logfile] || '(disabled)'}"
       @logger.info "               Workers: #{@config[:workers]}"
       @logger.info "                Queues: #{@config[:queues].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}" if @config[:queues].is_a?(Hash)
@@ -70,6 +71,7 @@ module Skiplock
     end
 
     def do_config
+      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
       @config[:max_retries] = 20 if @config[:max_retries] > 20
@@ -80,7 +82,7 @@ module Skiplock
       @config[:workers] = 0 if @config[:workers] < 0
       @config[:workers] = 1 if @config[:standalone] && @config[:workers] <= 0
       @logger = ActiveSupport::Logger.new(STDOUT)
-      @logger.level = Rails.logger.level
+      @logger.level = @config[:loglevel].to_sym
       Skiplock.logger = @logger
       raise "Cannot create logfile '#{@config[:logfile]}'" if @config[:logfile] && !File.writable?(File.dirname(@config[:logfile]))
       @config[:logfile] = nil if @config[:logfile].to_s.length == 0

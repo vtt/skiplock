@@ -54,6 +54,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     max_threads: 5
     max_retries: 20
     logfile: log/skiplock.log
+    loglevel: info
     notification: custom
     extensions: false
     purge_completion: true
@@ -67,6 +68,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
     - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry system` for more details
     - **logfile** (*string*): path filename for skiplock logs; empty logfile will disable logging
+    - **loglevel** (*string*): sets logging level (`debug, info, warn, error, fatal, unknown`)
     - **notification** (*string*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, custom`); using `auto` will detect library if available.  See `Notification system` for more details
     - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
     - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months)
