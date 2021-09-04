@@ -2,39 +2,6 @@ module Skiplock
   class Job < ActiveRecord::Base
     self.implicit_order_column = 'created_at'
 
-    def self.dispatch(queues_order_query: nil, worker_id: nil, purge_completion: true, max_retries: 20)
-      job = nil
-      self.transaction do
-        job = self.find_by_sql("SELECT id, scheduled_at FROM #{self.table_name} WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{queues_order_query ? ' CASE ' + queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
-        return (job ? job.scheduled_at.to_f : Float::INFINITY) if job.nil? || job.scheduled_at.to_f > Time.now.to_f
-        job = Skiplock::Job.find_by_sql("UPDATE #{self.table_name} SET running = TRUE, worker_id = #{self.connection.quote(worker_id)}, updated_at = NOW() WHERE id = '#{job.id}' RETURNING *").first
-      end
-      job.data ||= {}
-      job.exception_executions ||= {}
-      job_data = job.attributes.slice('job_class', 'queue_name', 'locale', 'timezone', 'priority', 'executions', 'exception_executions').merge('job_id' => job.id, 'enqueued_at' => job.updated_at, 'arguments' => (job.data['arguments'] || []))
-      job.executions = (job.executions || 0) + 1
-      Skiplock.logger.info "[Skiplock] Performing #{job.job_class} (#{job.id}) from queue '#{job.queue_name || 'default'}'..."
-      Thread.current[:skiplock_dispatch_job] = job
-      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      begin
-        ActiveJob::Base.execute(job_data)
-      rescue Exception => ex
-        Skiplock.logger.error(ex)
-      end
-      unless ex
-        end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        job_name = job.job_class
-        if job.job_class == 'Skiplock::Extension::ProxyJob'
-          target, method_name = ::YAML.load(job.data['arguments'].first)
-          job_name = "'#{target.name}.#{method_name}'"
-        end
-        Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{job.id}) from queue '#{job.queue_name || 'default'}' in #{end_time - start_time} seconds"
-      end
-      job.dispose(ex, purge_completion: purge_completion, max_retries: max_retries)
-    ensure
-      Thread.current[:skiplock_dispatch_job] = nil
-    end
-
     def self.enqueue(activejob)
       self.enqueue_at(activejob, nil)
     end
@@ -48,7 +15,7 @@ module Skiplock
         Thread.current[:skiplock_dispatch_job]
       else
         serialize = activejob.serialize
-        Job.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'] }, 'scheduled_at' => timestamp))
+        self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'] }, 'scheduled_at' => timestamp))
       end
     end
 
@@ -57,7 +24,7 @@ module Skiplock
     end
 
     def dispose(ex, purge_completion: true, max_retries: 20)
-      dup = self.dup
+      yaml = [self, ex].to_yaml
       self.running = false
       self.worker_id = nil
       self.updated_at = (Time.now > self.updated_at ? Time.now : self.updated_at + 1)
@@ -95,9 +62,41 @@ module Skiplock
       end
       self
     rescue Exception => e
-      Skiplock.logger.error(e)
-      File.write("tmp/skiplock/#{self.id}", [dup, ex].to_yaml)
+      Skiplock.logger.error(e.name)
+      Skiplock.logger.error(e.backtrace.join("\n"))
+      File.write("tmp/skiplock/#{self.id}", yaml)
       nil
+    end
+
+    def execute(purge_completion: true, max_retries: 20)
+      Skiplock.logger.info "[Skiplock] Performing #{self.job_class} (#{self.id}) from queue '#{self.queue_name || 'default'}'..."
+      self.data ||= {}
+      self.exception_executions ||= {}
+      job_data = self.attributes.slice('job_class', 'queue_name', 'locale', 'timezone', 'priority', 'executions', 'exception_executions').merge('job_id' => self.id, 'enqueued_at' => self.updated_at, 'arguments' => (self.data['arguments'] || []))
+      self.executions = (self.executions || 0) + 1
+      Thread.current[:skiplock_dispatch_job] = self
+      activejob = ActiveJob::Base.deserialize(job_data)
+      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      begin
+        activejob.perform_now
+      rescue Exception => ex
+      end
+      if ex || self.exception_executions.key?('activejob_retry')
+        Skiplock.logger.error("[Skiplock] Job #{self.job_class} (#{self.id}) was interrupted by an exception#{ ' (rescued and retried by ActiveJob)' if self.exception_executions.key?('activejob_retry') }")
+        if ex
+          Skiplock.logger.error(ex)
+          Skiplock.logger.error(ex.backtrace.join("\n"))
+        end
+      else
+        end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        job_name = self.job_class
+        if self.job_class == 'Skiplock::Extension::ProxyJob'
+          target, method_name = ::YAML.load(self.data['arguments'].first)
+          job_name = "'#{target.name}.#{method_name}'"
+        end
+        Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{self.id}) from queue '#{self.queue_name || 'default'}' in #{end_time - start_time} seconds"
+      end
+      self.dispose(ex, purge_completion: purge_completion, max_retries: max_retries)
     end
   end
 end

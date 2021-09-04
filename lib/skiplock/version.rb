@@ -1,4 +1,4 @@
 module Skiplock
-  VERSION = Version = '1.0.12'
+  VERSION = Version = '1.0.13'
 end
 

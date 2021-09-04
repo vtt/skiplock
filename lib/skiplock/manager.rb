@@ -6,30 +6,65 @@ module Skiplock
       @config.symbolize_keys!
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config.merge!(config)
-      Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
-      return unless @config[:standalone] || (caller.any?{ |l| l =~ %r{/rack/} } && (@config[:workers] == 0 || Rails.env.development?))
       @config[:hostname] = `hostname -f`.strip
-      do_config
-      banner if @config[:standalone]
-      cleanup_workers
-      create_worker
-      ActiveJob::Base.logger = nil
-      if @config[:standalone]
-        standalone
-      else
-        dispatcher = Dispatcher.new(worker: @worker, **@config)
-        thread = dispatcher.run
+      configure
+      Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
+      if (caller.any?{ |l| l =~ %r{/rack/} } && (@config[:workers] == 0 || Rails.env.development?))
+        cleanup_workers
+        @worker = create_worker
+        @thread = @worker.run(**@config)
         at_exit do
-          dispatcher.shutdown
-          thread.join(@config[:graceful_shutdown])
+          @worker.shutdown
+          @thread.join(@config[:graceful_shutdown])
           @worker.delete
         end
       end
     rescue Exception => ex
-      @logger.error(ex)
+      @logger.error(ex.name)
+      @logger.error(ex.backtrace.join("\n"))
     end
 
-  private
+    def standalone(**options)
+      @config.merge!(options)
+      Rails.logger.reopen('/dev/null')
+      Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
+      @config[:workers] = 1 if @config[:workers] <= 0
+      banner
+      cleanup_workers
+      @worker = create_worker
+      @parent_id = Process.pid
+      @shutdown = false
+      Signal.trap("INT") { @shutdown = true }
+      Signal.trap("TERM") { @shutdown = true }
+      (@config[:workers] - 1).times do |n|
+        fork do
+          sleep 1
+          worker = create_worker(master: false)
+          thread = worker.run(worker_num: n + 1, **@config)
+          loop do
+            sleep 0.5
+            break if @shutdown || Process.ppid != @parent_id
+          end
+          worker.shutdown
+          thread.join(@config[:graceful_shutdown])
+          worker.delete
+          exit
+        end
+      end
+      @thread = @worker.run(**@config)
+      loop do
+        sleep 0.5
+        break if @shutdown
+      end
+      @logger.info "[Skiplock] Terminating signal... Waiting for jobs to finish (up to #{@config[:graceful_shutdown]} seconds)..." if @config[:graceful_shutdown]
+      Process.waitall
+      @worker.shutdown
+      @thread.join(@config[:graceful_shutdown])
+      @worker.delete
+      @logger.info "[Skiplock] Shutdown completed."
+    end
+
+    private
 
     def banner
       title = "Skiplock #{Skiplock::VERSION} (Rails #{Rails::VERSION::STRING} | Ruby #{RUBY_VERSION}-p#{RUBY_PATCHLEVEL})"
@@ -58,19 +93,17 @@ module Skiplock
         sid = Process.getsid(worker.pid) rescue nil
         delete_ids << worker.id if worker.sid != sid || worker.updated_at < 30.minutes.ago
       end
-      if delete_ids.count > 0
-        Job.where(running: true, worker_id: delete_ids).update_all(running: false, worker_id: nil)
-        Worker.where(id: delete_ids).delete_all
-      end
+      Worker.where(id: delete_ids).delete_all if delete_ids.count > 0
+      Job.where(running: true).where.not(worker_id: Worker.ids).update_all(running: false, worker_id: nil)
     end
 
-    def create_worker(pid: Process.pid, sid: Process.getsid(), master: true)
-      @worker = Worker.create!(pid: pid, sid: sid, master: master, hostname: @config[:hostname], capacity: @config[:max_threads])
+    def create_worker(master: true)
+      Worker.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: @config[:hostname], capacity: @config[:max_threads])
     rescue
-      @worker = Worker.create!(pid: pid, sid: sid, master: false, hostname: @config[:hostname], capacity: @config[:max_threads])
+      Worker.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: @config[:hostname], capacity: @config[:max_threads])
     end
 
-    def do_config
+    def configure
       @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
@@ -80,7 +113,6 @@ module Skiplock
       @config[:max_threads] = 20 if @config[:max_threads] > 20
       @config[:min_threads] = 0 if @config[:min_threads] < 0
       @config[:workers] = 0 if @config[:workers] < 0
-      @config[:workers] = 1 if @config[:standalone] && @config[:workers] <= 0
       @logger = ActiveSupport::Logger.new(STDOUT)
       @logger.level = @config[:loglevel].to_sym
       Skiplock.logger = @logger
@@ -88,10 +120,7 @@ module Skiplock
       @config[:logfile] = nil if @config[:logfile].to_s.length == 0
       if @config[:logfile]
         @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(@config[:logfile])))
-        if @config[:standalone]
-          Rails.logger.reopen('/dev/null')
-          Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
-        end
+        ActiveJob::Base.logger = nil
       end
       @config[:queues].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) } if @config[:queues].is_a?(Hash)
       if @config[:notification] == 'auto'
@@ -125,41 +154,6 @@ module Skiplock
         @config[:notification] = 'custom'
       end
       Skiplock.on_errors.freeze unless Skiplock.on_errors.frozen?
-    end
-
-    def standalone
-      parent_id = Process.pid
-      shutdown = false
-      Signal.trap("INT") { shutdown = true }
-      Signal.trap("TERM") { shutdown = true }
-      (@config[:workers] - 1).times do |n|
-        fork do
-          sleep 1
-          worker = create_worker(master: false)
-          dispatcher = Dispatcher.new(worker: worker, worker_num: n + 1, **@config)
-          thread = dispatcher.run
-          loop do
-            sleep 0.5
-            break if shutdown || Process.ppid != parent_id
-          end
-          dispatcher.shutdown
-          thread.join(@config[:graceful_shutdown])
-          worker.delete
-          exit
-        end
-      end
-      dispatcher = Dispatcher.new(worker: @worker, **@config)
-      thread = dispatcher.run
-      loop do
-        sleep 0.5
-        break if shutdown
-      end
-      @logger.info "[Skiplock] Terminating signal... Waiting for jobs to finish (up to #{@config[:graceful_shutdown]} seconds)..." if @config[:graceful_shutdown]
-      Process.waitall
-      dispatcher.shutdown
-      thread.join(@config[:graceful_shutdown])
-      @worker.delete
-      @logger.info "[Skiplock] Shutdown completed."
     end
   end
 end

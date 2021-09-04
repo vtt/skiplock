@@ -25,4 +25,4 @@ options.transform_keys! { |k| k.to_s.gsub('-', '_').to_sym }
 env = options.delete(:environment)
 ENV['RAILS_ENV'] = env if env
 require File.expand_path("config/environment.rb")
-Skiplock::Manager.new(**options.merge(standalone: true))
+Rails.application.config.skiplock.standalone(**options.merge(standalone: true))
