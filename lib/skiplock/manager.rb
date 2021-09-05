@@ -9,7 +9,7 @@ module Skiplock
       @config[:hostname] = `hostname -f`.strip
       configure
       Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
-      if (caller.any?{ |l| l =~ %r{/rack/} } && (@config[:workers] == 0 || Rails.env.development?))
+      if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
         cleanup_workers
         @worker = create_worker
         @thread = @worker.run(**@config)
@@ -20,7 +20,7 @@ module Skiplock
         end
       end
     rescue Exception => ex
-      @logger.error(ex.name)
+      @logger.error(ex.to_s)
       @logger.error(ex.backtrace.join("\n"))
     end
 

@@ -3,14 +3,15 @@ module Skiplock
     self.implicit_order_column = 'created_at'
 
     def run(worker_num: 0, **config)
-      @config = config
-      @worker_num = worker_num
-      @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
-      @next_schedule_at = Time.now.to_f
-      @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads], max_threads: @config[:max_threads], max_queue: @config[:max_threads], idletime: 60, auto_terminate: true, fallback_policy: :discard)
-      @running = true
-      Process.setproctitle("skiplock-#{self.master ? 'master[0]' : 'worker[' + @worker_num.to_s + ']'}") if @config[:standalone]
       Thread.new do
+        execution_context = Rails.application.reloader.run!
+        @config = config
+        @worker_num = worker_num
+        @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
+        @next_schedule_at = Time.now.to_f
+        @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads], max_threads: @config[:max_threads], max_queue: @config[:max_threads], idletime: 60, auto_terminate: true, fallback_policy: :discard)
+        @running = true
+        Process.setproctitle("skiplock-#{self.master ? 'master[0]' : 'worker[' + @worker_num.to_s + ']'}") if @config[:standalone]
         @connection = self.class.connection
         @connection.exec_query('LISTEN "skiplock::jobs"')
         if self.master
@@ -67,7 +68,7 @@ module Skiplock
               end
             rescue Exception => ex
               # most likely error with database connection
-              Skiplock.logger.error(ex.name)
+              Skiplock.logger.error(ex.to_s)
               Skiplock.logger.error(ex.backtrace.join("\n"))
               Skiplock.on_errors.each { |p| p.call(ex, @last_exception) }
               error = true
@@ -84,6 +85,8 @@ module Skiplock
         @connection.exec_query('UNLISTEN *')
         @executor.shutdown
         @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
+      ensure
+        execution_context.complete! if execution_context
       end
     end
 
@@ -94,13 +97,13 @@ module Skiplock
     private
 
     def check_sync_errors
-      # get performed jobs that could not sync with database
+      # get executed jobs that could not sync with database
       Dir.glob('tmp/skiplock/*').each do |f|
         job_from_db = Job.find_by(id: File.basename(f), running: true)
         disposed = true
         if job_from_db
           job, ex = YAML.load_file(f) rescue nil
-          disposed = job.dispose(ex, purge_completion: @config[:purge_completion], max_retries: @config[:max_retries])
+          disposed = job.dispose(ex, purge_completion: @config[:purge_completion], max_retries: @config[:max_retries]) if job
         end
         File.delete(f) if disposed
       end
