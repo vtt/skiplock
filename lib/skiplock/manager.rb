@@ -12,12 +12,8 @@ module Skiplock
       if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
         cleanup_workers
         @worker = create_worker
-        @thread = @worker.run(**@config)
-        at_exit do
-          @worker.shutdown
-          @thread.join(@config[:graceful_shutdown])
-          @worker.delete
-        end
+        @worker.start(**@config)
+        at_exit { @worker.shutdown }
       end
     rescue Exception => ex
       @logger.error(ex.to_s)
@@ -40,18 +36,15 @@ module Skiplock
         fork do
           sleep 1
           worker = create_worker(master: false)
-          thread = worker.run(worker_num: n + 1, **@config)
+          worker.start(worker_num: n + 1, **@config)
           loop do
             sleep 0.5
             break if @shutdown || Process.ppid != @parent_id
           end
           worker.shutdown
-          thread.join(@config[:graceful_shutdown])
-          worker.delete
-          exit
         end
       end
-      @thread = @worker.run(**@config)
+      @worker.start(**@config)
       loop do
         sleep 0.5
         break if @shutdown
@@ -59,8 +52,6 @@ module Skiplock
       @logger.info "[Skiplock] Terminating signal... Waiting for jobs to finish (up to #{@config[:graceful_shutdown]} seconds)..." if @config[:graceful_shutdown]
       Process.waitall
       @worker.shutdown
-      @thread.join(@config[:graceful_shutdown])
-      @worker.delete
       @logger.info "[Skiplock] Shutdown completed."
     end
 

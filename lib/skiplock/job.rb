@@ -3,6 +3,7 @@ module Skiplock
     self.implicit_order_column = 'created_at'
 
     def self.dispatch(worker_id: nil, purge_completion: true, max_retries: 20)
+      job = nil
       self.connection.transaction do
         job = self.find_by_sql("SELECT id, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
         return if job.nil? || job.scheduled_at.to_f > Time.now.to_f
