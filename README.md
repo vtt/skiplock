@@ -53,7 +53,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     min_threads: 1
     max_threads: 5
     max_retries: 20
-    logfile: log/skiplock.log
+    logfile: skiplock.log
     loglevel: info
     notification: custom
     extensions: false
@@ -67,7 +67,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     - **min_threads** (*integer*): sets minimum number of threads staying idle
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
     - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry system` for more details
-    - **logfile** (*string*): path filename for skiplock logs; empty logfile will disable logging
+    - **logfile** (*string*): filename for skiplock logs; empty logfile will disable logging
     - **loglevel** (*string*): sets logging level (`debug, info, warn, error, fatal, unknown`)
     - **notification** (*string*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, custom`); using `auto` will detect library if available.  See `Notification system` for more details
     - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
@@ -84,7 +84,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     $ bundle exec skiplock -h
     Usage: skiplock [options]
       -e, --environment STRING         Rails environment
-      -l, --logfile STRING             Full path to logfile
+      -l, --logfile STRING             Log filename
       -s, --graceful-shutdown NUM      Number of seconds to wait for graceful shutdown
       -r, --max-retries NUM            Number of maxixum retries
       -t, --max-threads NUM            Number of maximum threads
@@ -188,7 +188,11 @@ If the `retry_on` block is not defined, then the built-in retry system of `skipl
   ```
 
 ## Fault tolerant
-`Skiplock` ensures that jobs will be executed sucessfully only once even if database connection is lost during or after the job was dispatched.  Successful jobs are marked as completed or removed (with `purge_completion` turned on), and failed or interrupted jobs are marked for retry; however, when the database connection is dropped for any reasons and the commit is lost, `Skiplock` will then save the commit data to local disk (as `tmp/skiplock/<job_id>`) and synchronize with the database when the connection resumes.  This also protects in-progress jobs that were terminated abruptly during a graceful shutdown with timeout; they will be queued for retry.
+`Skiplock` ensures that jobs will be executed sucessfully only once even if database connection is lost during or after the job was dispatched.  Successful jobs are marked as completed or removed (with `purge_completion` turned on), and failed or interrupted jobs are marked for retry.
+
+However, when the database connection is dropped for any reasons and the commit is lost, `Skiplock` will then save the commit data to local disk (as `tmp/skiplock/<job_id>`) and synchronize with the database when the connection resumes.
+
+This also protects in-progress jobs that were terminated abruptly during a graceful shutdown with timeout; they will be queued for retry.
 
 ## Scalability
 `Skiplock` can scale both vertically and horizontally.  To scale vertically, simply increase the number of `Skiplock` workers per host.  To scale horizontally, simply deploy `Skiplock` to multiple hosts sharing the same PostgreSQL database.
