@@ -8,6 +8,7 @@ module Skiplock
       @config.merge!(config)
       @config[:hostname] = `hostname -f`.strip
       configure
+      setup_logger
       Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
       if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
         cleanup_workers
@@ -25,13 +26,15 @@ module Skiplock
       Rails.logger.reopen('/dev/null')
       Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
       @config[:workers] = 1 if @config[:workers] <= 0
+      @config[:standalone] = true
       banner
       cleanup_workers
       @worker = create_worker
       @parent_id = Process.pid
       @shutdown = false
-      Signal.trap("INT") { @shutdown = true }
-      Signal.trap("TERM") { @shutdown = true }
+      Signal.trap('INT') { @shutdown = true }
+      Signal.trap('TERM') { @shutdown = true }
+      Signal.trap('HUP') { setup_logger }
       (@config[:workers] - 1).times do |n|
         fork do
           sleep 1
@@ -79,13 +82,13 @@ module Skiplock
     end
 
     def cleanup_workers
+      Rails.application.eager_load! if Rails.env.development?
       delete_ids = []
       Worker.where(hostname: @config[:hostname]).each do |worker|
         sid = Process.getsid(worker.pid) rescue nil
-        delete_ids << worker.id if worker.sid != sid || worker.updated_at < 30.minutes.ago
+        delete_ids << worker.id if worker.sid != sid || worker.updated_at < 10.minutes.ago
       end
       Worker.where(id: delete_ids).delete_all if delete_ids.count > 0
-      Job.where(running: true).where.not(worker_id: Worker.ids).update_all(running: false, worker_id: nil)
     end
 
     def create_worker(master: true)
@@ -95,7 +98,6 @@ module Skiplock
     end
 
     def configure
-      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
       @config[:max_retries] = 20 if @config[:max_retries] > 20
@@ -104,15 +106,6 @@ module Skiplock
       @config[:max_threads] = 20 if @config[:max_threads] > 20
       @config[:min_threads] = 0 if @config[:min_threads] < 0
       @config[:workers] = 0 if @config[:workers] < 0
-      @logger = ActiveSupport::Logger.new(STDOUT)
-      @logger.level = @config[:loglevel].to_sym
-      Skiplock.logger = @logger
-      raise "Cannot create logfile '#{@config[:logfile]}'" if @config[:logfile] && !File.writable?(File.dirname(@config[:logfile]))
-      @config[:logfile] = nil if @config[:logfile].to_s.length == 0
-      if @config[:logfile]
-        @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(@config[:logfile])))
-        ActiveJob::Base.logger = nil
-      end
       @config[:queues].values.each { |v| raise 'Queue value must be an integer' unless v.is_a?(Integer) } if @config[:queues].is_a?(Hash)
       if @config[:notification] == 'auto'
         if defined?(Airbrake)
@@ -145,6 +138,21 @@ module Skiplock
         @config[:notification] = 'custom'
       end
       Skiplock.on_errors.freeze unless Skiplock.on_errors.frozen?
+    end
+
+    def setup_logger
+      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
+      @logger = ActiveSupport::Logger.new(STDOUT)
+      @logger.level = @config[:loglevel].to_sym
+      Skiplock.logger = @logger
+      if @config[:logfile].to_s.length > 0
+        @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
+        ActiveJob::Base.logger = nil
+      end
+    rescue Exception => ex
+      puts "Exception with logger: #{ex.to_s}"
+      puts ex.backtrace.join("\n")
+      Skiplock.on_errors.each { |p| p.call(ex) }
     end
   end
 end

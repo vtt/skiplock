@@ -2,7 +2,6 @@ require 'cron_parser'
 module Skiplock
   class Cron
     def self.setup
-      Rails.application.eager_load! if Rails.env.development?
       cronjobs = []
       ActiveJob::Base.descendants.each do |j|
         next unless j.const_defined?('CRON')

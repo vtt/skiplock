@@ -1,17 +1,20 @@
 module Skiplock
   class Worker < ActiveRecord::Base
     self.implicit_order_column = 'created_at'
+    has_many :jobs, inverse_of: :worker
 
     def start(worker_num: 0, **config)
       @config = config
       @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
       @next_schedule_at = Time.now.to_f
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads] + 1, max_threads: @config[:max_threads] + 1, max_queue: @config[:max_threads], idletime: 60, auto_terminate: true, fallback_policy: :discard)
+      if self.master
+        Job.cleanup(purge_completion: @config[:purge_completion], max_retries: @config[:max_retries])
+        Cron.setup
+      end
       @running = true
       Process.setproctitle("skiplock-#{self.master ? 'master[0]' : 'worker[' + worker_num.to_s + ']'}") if @config[:standalone]
-      @executor.post do
-        Rails.application.reloader.wrap { run }
-      end
+      @executor.post { run }
     end
 
     def shutdown
@@ -22,19 +25,6 @@ module Skiplock
     end
 
     private
-
-    def check_sync_errors
-      # get executed jobs that could not sync with database
-      Dir.glob('tmp/skiplock/*').each do |f|
-        job_from_db = Job.find_by(id: File.basename(f), running: true)
-        disposed = true
-        if job_from_db
-          job, ex = YAML.load_file(f) rescue nil
-          disposed = job.dispose(ex, purge_completion: @config[:purge_completion], max_retries: @config[:max_retries]) if job
-        end
-        File.delete(f) if disposed
-      end
-    end
 
     def get_next_available_job
       @connection.transaction do
@@ -47,18 +37,17 @@ module Skiplock
     end
 
     def run
-      @connection = self.class.connection
-      @connection.exec_query('LISTEN "skiplock::jobs"')
-      if self.master
-        Dir.mkdir('tmp/skiplock') unless Dir.exist?('tmp/skiplock')
-        check_sync_errors
-        Cron.setup
-      end
       error = false
+      listen = false
       timestamp = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       while @running
         Rails.application.reloader.wrap do
           begin
+            unless listen
+              @connection = self.class.connection
+              @connection.exec_query('LISTEN "skiplock::jobs"')
+              listen = true
+            end
             if error
               unless @connection.active?
                 @connection.reconnect!
@@ -66,17 +55,13 @@ module Skiplock
                 @connection.exec_query('LISTEN "skiplock::jobs"')
                 @next_schedule_at = Time.now.to_f
               end
-              check_sync_errors if self.master
+              Job.cleanup if self.master
               error = false
             end
             if Time.now.to_f >= @next_schedule_at && @executor.remaining_capacity > 0
               job = get_next_available_job
               if job.try(:running)
-                @executor.post do
-                  Rails.application.executor.wrap do
-                    ActiveSupport::Dependencies.interlock.permit_concurrent_loads { job.execute(purge_completion: @config[:purge_completion], max_retries: @config[:max_retries]) }
-                  end
-                end
+                @executor.post { Rails.application.reloader.wrap { job.execute(purge_completion: @config[:purge_completion], max_retries: @config[:max_retries]) } }
               else
                 @next_schedule_at = (job ? job.scheduled_at.to_f : Float::INFINITY)
               end
@@ -105,17 +90,21 @@ module Skiplock
             Skiplock.logger.error(ex.backtrace.join("\n"))
             Skiplock.on_errors.each { |p| p.call(ex, @last_exception) }
             error = true
-            t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-            while @running
-              sleep(0.5)
-              break if Process.clock_gettime(Process::CLOCK_MONOTONIC) - t > 5
-            end
+            wait(5)
             @last_exception = ex
           end
           sleep(0.3)
         end
       end
       @connection.exec_query('UNLISTEN *')
+    end
+
+    def wait(timeout)
+      t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      while @running
+        sleep(0.5)
+        break if Process.clock_gettime(Process::CLOCK_MONOTONIC) - t > timeout
+      end
     end
   end
 end

@@ -4,7 +4,7 @@
 
 It only uses the `LISTEN/NOTIFY/SKIP LOCKED` features provided natively on PostgreSQL 9.5+ to efficiently and reliably dispatch jobs to worker processes and threads ensuring that each job can be completed successfully **only once**.  No other polling or timer is needed.
 
-The library is quite small compared to other PostgreSQL job queues (eg. *delay_job*, *queue_classic*, *que*, *good_job*) with less than 400 lines of codes; and it still provides similar set of features and more...
+The library is quite small compared to other PostgreSQL job queues (eg. *delay_job*, *queue_classic*, *que*, *good_job*) with less than 500 lines of codes; and it still provides similar set of features and more...
 
 #### Compatibility:
 
@@ -186,6 +186,37 @@ If the `retry_on` block is not defined, then the built-in retry system of `skipl
   ```ruby
   Subscription.skiplock(wait_until: Date.tomorrow.noon).charge(amount: 100)
   ```
+
+## Fault tolerant
+`Skiplock` ensures that jobs will be executed sucessfully only once even if database connection is lost during or after the job was dispatched.  Successful jobs are marked as completed or removed (with `purge_completion` turned on), and failed or interrupted jobs are marked for retry; however, when the database connection is dropped for any reasons and the commit is lost, `Skiplock` will then save the commit data to local disk (as `tmp/skiplock/<job_id>`) and synchronize with the database when the connection resumes.  This also protects in-progress jobs that were terminated abruptly during a graceful shutdown with timeout; they will be queued for retry.
+
+## Scalability
+`Skiplock` can scale both vertically and horizontally.  To scale vertically, simply increase the number of `Skiplock` workers per host.  To scale horizontally, simply deploy `Skiplock` to multiple hosts sharing the same PostgreSQL database.
+
+## Statistics and counters
+The `skiplock.workers` database table contains all the `Skiplock` workers running on all the hosts.  Active worker will update its timestamp column (`updated_at`) every minute; and dispatched jobs would be associated with the running workers.  At any given time, a list of active workers running a list of jobs can be determined using the database table.
+
+The `skiplock.counters` database table contains all historical job dispatches, completions, expiries, failures and retries.  The counters are recorded by dates; so it's possible to get statistical data for any given day or range of dates.
+
+  - **completions**: numbers of jobs completed successfully
+  - **dispatches**: number of jobs dispatched for the first time (**retries** are not counted here)
+  - **expiries**: number of jobs exceeded `max_retry` and still failed to complete
+  - **failures**: number of jobs interrupted by graceful shutdown or errors (exceptions)
+  - **retries**: number of jobs dispatched for retrying
+
+Code examples of gathering counters information:
+  - get counter information for today
+    ```ruby
+    Skiplock::Counter.where(day: Date.today).first
+    ```
+  - get total number of successfully completed jobs within the past 30 days
+    ```ruby
+    Skiplock::Counter.where("day >= ?", 30.days.ago).sum(:completions)
+    ```
+  - get total number of expired jobs
+    ```ruby
+    Skiplock::Counter.sum(:expiries)
+    ```
 
 ## Contributing
 
