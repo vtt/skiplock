@@ -73,6 +73,7 @@ module Skiplock
           self.data['last_cron_at'] = Time.now.utc.to_s
           next_cron_at = Cron.next_schedule_at(self.cron)
           if next_cron_at
+            self.finished_at = nil
             self.executions = nil
             self.exception_executions = nil
             self.scheduled_at = Time.at(next_cron_at)

@@ -155,9 +155,9 @@ Outside the Rails application:
     # ...
     end
     ```
-If the retry attempt limit configured in ActiveJob has been reached, then the control will be passed back to `skiplock` to be marked as an expired job.
+If the retry attempt limit configured in ActiveJob has been reached, then the control will be passed back to `Skiplock` to be marked as an expired job.
 
-If the `retry_on` block is not defined, then the built-in retry system of `skiplock` will kick in automatically.  The retrying schedule is using an exponential formula (5 + 2**attempt).  The `skiplock` configuration `max_retries` determines the the limit of attempts before the failing job is marked as expired.  The maximum retry limit can be set as high as 20; this allows up to 12 days of retrying before the job is marked as expired.
+If the `retry_on` block is not defined, then the built-in retry system of `Skiplock` will kick in automatically.  The retrying schedule is using an exponential formula (5 + 2**attempt).  The `Skiplock` configuration `max_retries` determines the the limit of attempts before the failing job is marked as expired.  The maximum retry limit can be set as high as 20; this allows up to 12 days of retrying before the job is marked as expired.
 
 ## Notification system
 `Skiplock` can use existing exception notification library to notify errors and exceptions.  It supports `airbrake`, `bugsnag`, and `exception_notification`.  Custom notification can also be called whenever an exception occurs; it can be configured in an initializer like below:
