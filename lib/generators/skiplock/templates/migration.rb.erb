@@ -56,7 +56,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
             INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
           ELSIF (record.expired_at IS NOT NULL) THEN
             INSERT INTO skiplock.counters (day,expiries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
-          ELSIF (record.executions > 0) THEN
+          ELSIF (TG_OP = 'UPDATE' AND OLD.running = TRUE AND NEW.running = FALSE) THEN
             INSERT INTO skiplock.counters (day,failures) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET failures = skiplock.counters.failures + 1;
           END IF;
           PERFORM pg_notify('skiplock::jobs', CONCAT(TG_OP,',',record.id::TEXT,',',record.worker_id::TEXT,',',record.job_class,',',record.queue_name,',',record.running::TEXT,',',CAST(EXTRACT(EPOCH FROM record.expired_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.finished_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM CASE WHEN record.scheduled_at IS NULL THEN record.updated_at ELSE record.scheduled_at END) AS FLOAT)::TEXT));

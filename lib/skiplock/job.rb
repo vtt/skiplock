@@ -73,6 +73,8 @@ module Skiplock
           self.data['last_cron_at'] = Time.now.utc.to_s
           next_cron_at = Cron.next_schedule_at(self.cron)
           if next_cron_at
+            # update job to record completions counter before resetting finished_at to nil
+            self.update_columns(self.attributes.slice(*self.changes.keys))
             self.finished_at = nil
             self.executions = nil
             self.exception_executions = nil
