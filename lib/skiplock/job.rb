@@ -65,12 +65,11 @@ module Skiplock
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
         end
-        Skiplock.on_errors.each { |p| p.call(ex) }
       elsif self.finished_at
         if self.cron
           self.data ||= {}
           self.data['crons'] = (self.data['crons'] || 0) + 1
-          self.data['last_cron_at'] = Time.now.utc.to_s
+          self.data['last_cron_at'] = self.finished_at.utc.to_s
           next_cron_at = Cron.next_schedule_at(self.cron)
           if next_cron_at
             # update job to record completions counter before resetting finished_at to nil
@@ -111,6 +110,7 @@ module Skiplock
         ActiveJob::Base.execute(job_data)
         self.finished_at = Time.now unless self.activejob_retry
       rescue Exception => ex
+        Skiplock.on_errors.each { |p| p.call(ex) }
       end
       if Skiplock.logger
         if ex || self.activejob_retry

@@ -89,6 +89,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
       -r, --max-retries NUM            Number of maxixum retries
       -t, --max-threads NUM            Number of maximum threads
       -T, --min-threads NUM            Number of minimum threads
+      -v, --version                    Show version information
       -w, --workers NUM                Number of workers
       -h, --help                       Show this message
     ```
