@@ -201,9 +201,9 @@ To enable extension for specific classes and modules only then set the configura
   ```ruby
   Session.skiplock(wait: 5.minutes, queue: 'maintenance').cleanup
   ```
-- Queue class method `charge` of class `Subscription` as background job to run tomorrow at noon
+- Queue class method `charge` of class `Subscription` as background job to run tomorrow at noon without purging
   ```ruby
-  Subscription.skiplock(wait_until: Date.tomorrow.noon).charge(amount: 100)
+  Subscription.skiplock(purge: false, wait_until: Date.tomorrow.noon).charge(amount: 100)
   ```
 
 ## Fault tolerant

@@ -46,18 +46,20 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
             IF (record.running = TRUE) THEN
               INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
             END IF;
-          ELSIF (record.running = TRUE) THEN
-            IF (record.executions > 0) THEN
-              INSERT INTO skiplock.counters (day,retries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET retries = skiplock.counters.retries + 1;
-            ELSE
-              INSERT INTO skiplock.counters (day,dispatches) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET dispatches = skiplock.counters.dispatches + 1;
+          ELSIF (TG_OP = 'UPDATE') THEN
+            IF (OLD.running = FALSE AND record.running = TRUE) THEN
+              IF (record.executions > 0) THEN
+                INSERT INTO skiplock.counters (day,retries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET retries = skiplock.counters.retries + 1;
+              ELSE
+                INSERT INTO skiplock.counters (day,dispatches) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET dispatches = skiplock.counters.dispatches + 1;
+              END IF;
+            ELSIF (OLD.finished_at IS NULL AND record.finished_at IS NOT NULL) THEN
+              INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
+            ELSIF (OLD.expired_at IS NULL AND record.expired_at IS NOT NULL) THEN
+              INSERT INTO skiplock.counters (day,expiries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
+            ELSIF (OLD.running = TRUE AND record.running = FALSE AND record.expired_at IS NULL AND record.finished_at IS NULL) THEN
+              INSERT INTO skiplock.counters (day,failures) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET failures = skiplock.counters.failures + 1;
             END IF;
-          ELSIF (record.finished_at IS NOT NULL) THEN
-            INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
-          ELSIF (record.expired_at IS NOT NULL) THEN
-            INSERT INTO skiplock.counters (day,expiries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
-          ELSIF (TG_OP = 'UPDATE' AND OLD.running = TRUE AND NEW.running = FALSE) THEN
-            INSERT INTO skiplock.counters (day,failures) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET failures = skiplock.counters.failures + 1;
           END IF;
           PERFORM pg_notify('skiplock::jobs', CONCAT(TG_OP,',',record.id::TEXT,',',record.worker_id::TEXT,',',record.job_class,',',record.queue_name,',',record.running::TEXT,',',CAST(EXTRACT(EPOCH FROM record.expired_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.finished_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM CASE WHEN record.scheduled_at IS NULL THEN record.updated_at ELSE record.scheduled_at END) AS FLOAT)::TEXT));
           RETURN NULL;
