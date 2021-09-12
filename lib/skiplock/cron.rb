@@ -11,7 +11,7 @@ module Skiplock
         if time
           job.cron = cron
           job.running = false
-          job.scheduled_at = Time.at(time)
+          job.scheduled_at = Time.at(time) unless job.try(:executions).to_i > 0  # do not update schedule of retrying cron jobs
           job.save
           cronjobs << j.name
         end

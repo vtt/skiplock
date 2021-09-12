@@ -106,7 +106,7 @@ Inside the Rails application:
     MyJob.set(wait_until: Day.tomorrow.noon).perform_later(1,2,3)
     ```
 - Skiplock supports custom options which override the global `Skiplock` configuration options for specified jobs
-    - **purge** (*boolean*): whether to remove this job after it has ran successfully
+    - **purge** (*boolean*): whether to remove this job after it has completed successfully
     - **max_retries** (*integer*): set maximum retry attempt for this job
     ```ruby
     MyJob.set(purge: false, max_retries: 5).perform_later(1,2,3)
@@ -119,7 +119,8 @@ Outside the Rails application:
 - with scheduling, priority, queue, arguments and custom options
     ```sql
     INSERT INTO skiplock.jobs(job_class, queue_name, priority, scheduled_at, data)
-      VALUES ('MyJob', 'my_queue', 10, NOW() + INTERVAL '5 min', '{"arguments":[1,2,3],"options":{"purge":false,"max_retries":5}}');
+      VALUES ('MyJob', 'my_queue', 10, NOW() + INTERVAL '5 min',
+      '{"arguments":[1,2,3],"options":{"purge":false,"max_retries":5}}');
     ```
 ## Queue priority vs Job priority
 *Why do queues use priorities when jobs already have priorities?*
@@ -186,10 +187,11 @@ If the `retry_on` block is not defined, then the built-in retry system of `Skipl
 `Skiplock` can add extension to allow class methods to be performed as a background job; it is disabled in the default configuration.  To enable globally for all classes and modules, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`; this can expose remote code execution if the `skiplock.jobs` database table is not secured properly.
 
 To enable extension for specific classes and modules only then set the configuration to an array of names of the classes and modules eg. `['MyClass', 'MyModule']`
-- An example of remote execution if the extension is enabled globally (ie: configuration is set to `true`) and attacker can insert `skiplock.jobs`
+- An example of remote code execution if the extension is enabled globally (ie: configuration is set to `true`) and attacker can insert `skiplock.jobs`
   ```sql
   INSERT INTO skiplock.jobs(job_class, data)
-    VALUES ('Skiplock::Extension::ProxyJob', '{"arguments":["---\n- !ruby/module ''Kernel''\n- :system\n- - rm -rf /tmp/*\n"]}');
+    VALUES ('Skiplock::Extension::ProxyJob',
+    '{"arguments":["---\n- !ruby/module ''Kernel''\n- :system\n- - rm -rf /tmp/*\n"]}');
   ```
 - Queue class method `generate_thumbnails` of class `Image` as background job to run as soon as possible
   ```ruby

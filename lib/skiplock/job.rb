@@ -1,6 +1,6 @@
 module Skiplock
   class Job < ActiveRecord::Base
-    self.implicit_order_column = 'created_at'
+    self.implicit_order_column = 'updated_at'
     attr_accessor :activejob_retry
     belongs_to :worker, inverse_of: :jobs, required: false
 
@@ -22,6 +22,7 @@ module Skiplock
       timestamp = Time.at(timestamp) if timestamp
       if Thread.current[:skiplock_job].try(:id) == activejob.job_id
         Thread.current[:skiplock_job].activejob_retry = true
+        Thread.current[:skiplock_job].data['activejob_retry'] = true
         Thread.current[:skiplock_job].executions = activejob.executions
         Thread.current[:skiplock_job].exception_executions = activejob.exception_executions
         Thread.current[:skiplock_job].scheduled_at = timestamp
@@ -33,7 +34,7 @@ module Skiplock
       end
     end
 
-    # resynchronize jobs that could not commit to database and retry any abandoned jobs
+    # resynchronize jobs that could not commit to database and reset any abandoned jobs for retry
     def self.flush
       Dir.mkdir('tmp/skiplock') unless Dir.exist?('tmp/skiplock')
       Dir.glob('tmp/skiplock/*').each do |f|
@@ -61,7 +62,7 @@ module Skiplock
       self.updated_at = Time.now > self.updated_at ? Time.now : self.updated_at + 1 # in case of clock drifting
       if @exception
         self.exception_executions["[#{@exception.class.name}]"] = self.exception_executions["[#{@exception.class.name}]"].to_i + 1 unless self.activejob_retry
-        if (self.executions.to_i >= @max_retries + 1) || self.activejob_retry
+        if (self.executions.to_i >= @max_retries + 1) || self.data.key?('activejob_retry') || @exception.is_a?(Skiplock::Extension::ProxyError)
           self.expired_at = Time.now
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
@@ -71,6 +72,7 @@ module Skiplock
           self.data['cron'] ||= {}
           self.data['cron']['executions'] = self.data['cron']['executions'].to_i + 1
           self.data['cron']['last_finished_at'] = self.finished_at.utc.to_s
+          self.data['cron']['last_result'] = self.data['result']
           next_cron_at = Cron.next_schedule_at(self.cron)
           if next_cron_at
             # update job to record completions counter before resetting finished_at to nil
@@ -78,6 +80,7 @@ module Skiplock
             self.finished_at = nil
             self.executions = nil
             self.exception_executions = nil
+            self.data.delete('result')
             self.scheduled_at = Time.at(next_cron_at)
           else
             Skiplock.logger.error("[Skiplock] ERROR: Invalid CRON '#{self.cron}' for Job #{self.job_class}") if Skiplock.logger

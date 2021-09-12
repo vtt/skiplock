@@ -1,11 +1,10 @@
 module Skiplock
   class Manager
-    def initialize(**config)
+    def initialize
       @config = Skiplock::DEFAULT_CONFIG.dup
       @config.merge!(YAML.load_file('config/skiplock.yml')) rescue nil
       @config.symbolize_keys!
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
-      @config.merge!(config)
       @hostname = Socket.gethostname
       configure
       setup_logger
@@ -22,7 +21,7 @@ module Skiplock
 
     def standalone(**options)
       @config.merge!(options)
-      Rails.logger.reopen('/dev/null')
+      Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
       Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
       @config[:workers] = 1 if @config[:workers] <= 0
       @config[:standalone] = true

@@ -1,6 +1,6 @@
 module Skiplock
   class Worker < ActiveRecord::Base
-    self.implicit_order_column = 'created_at'
+    self.implicit_order_column = 'updated_at'
     has_many :jobs, inverse_of: :worker
 
     def self.cleanup(hostname = nil)
@@ -42,7 +42,7 @@ module Skiplock
 
     def get_next_available_job
       @connection.transaction do
-        job = Job.find_by_sql("SELECT id, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
+        job = Job.find_by_sql("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
         if job && job.scheduled_at.to_f <= Time.now.to_f
           job = Job.find_by_sql("UPDATE skiplock.jobs SET running = TRUE, worker_id = '#{self.id}', updated_at = NOW() WHERE id = '#{job.id}' RETURNING *").first
         end
