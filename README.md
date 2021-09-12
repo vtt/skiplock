@@ -183,10 +183,13 @@ If the `retry_on` block is not defined, then the built-in retry system of `Skipl
   # supports multiple 'on_error' event callbacks
 ```
 ## ClassMethod extension
-`Skiplock` can add extension to allow class methods to be performed as a background job; it is disabled in the default configuration.  To enable globally for all classes and modules, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`; this can expose remote execution if the `skiplock.jobs` database table is not secured properly.  To enable extension for specific classes and modules only then set the configuration to an array of names of the classes and modules eg. `['MyClass', 'MyModule']`
+`Skiplock` can add extension to allow class methods to be performed as a background job; it is disabled in the default configuration.  To enable globally for all classes and modules, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`; this can expose remote code execution if the `skiplock.jobs` database table is not secured properly.
+
+To enable extension for specific classes and modules only then set the configuration to an array of names of the classes and modules eg. `['MyClass', 'MyModule']`
 - An example of remote execution if the extension is enabled globally (ie: configuration is set to `true`) and attacker can insert `skiplock.jobs`
   ```sql
-  INSERT INTO skiplock.jobs(job_class, data) VALUES ('Skiplock::Extension::ProxyJob', '{"arguments":["---\n- !ruby/module ''Kernel''\n- :system\n- - rm -rf /tmp/*\n"]}');
+  INSERT INTO skiplock.jobs(job_class, data)
+    VALUES ('Skiplock::Extension::ProxyJob', '{"arguments":["---\n- !ruby/module ''Kernel''\n- :system\n- - rm -rf /tmp/*\n"]}');
   ```
 - Queue class method `generate_thumbnails` of class `Image` as background job to run as soon as possible
   ```ruby
