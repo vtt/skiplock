@@ -40,9 +40,6 @@ module Skiplock
 
     private
 
-    def get_next_available_job
-    end
-
     def run
       ActiveRecord::Base.connection_pool.with_connection do |connection|
         connection.exec_query('LISTEN "skiplock::jobs"')
@@ -63,7 +60,7 @@ module Skiplock
                 error = false
               end
               if Time.now.to_f >= next_schedule_at && @executor.remaining_capacity > 0
-                job = get_next_available_job
+                job = nil
                 connection.transaction do
                   job = Job.find_by_sql("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
                   job = Job.find_by_sql("UPDATE skiplock.jobs SET running = TRUE, worker_id = '#{self.id}', updated_at = NOW() WHERE id = '#{job.id}' RETURNING *").first if job && job.scheduled_at.to_f <= Time.now.to_f
@@ -77,7 +74,7 @@ module Skiplock
                 end
               end
               job_notifications = []
-              connection.raw_connection.wait_for_notify(0.4) do |channel, pid, payload|
+              connection.raw_connection.wait_for_notify(0.2) do |channel, pid, payload|
                 job_notifications << payload if payload
                 loop do
                   payload = connection.raw_connection.notifies
