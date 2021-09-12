@@ -87,7 +87,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
     execute "CREATE INDEX jobs_retry_index ON skiplock.jobs(scheduled_at) WHERE running = FALSE AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL"
     execute "CREATE INDEX jobs_cron_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE cron IS NOT NULL AND finished_at IS NULL"
     execute "CREATE UNIQUE INDEX jobs_unique_cron_index ON skiplock.jobs (job_class) WHERE cron IS NOT NULL"
-    execute "CREATE UNIQUE INDEX workers_unique_master_index ON skiplock.workers(hostname) WHERE master = 't'"
+    execute "CREATE UNIQUE INDEX workers_unique_master_index ON skiplock.workers(hostname) WHERE master = TRUE"
   end
 
   def down
