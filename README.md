@@ -51,7 +51,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     # config/skiplock.yml (default settings)
     ---
     min_threads: 1
-    max_threads: 5
+    max_threads: 10
     max_retries: 20
     logfile: skiplock.log
     loglevel: info
@@ -70,8 +70,8 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     - **logfile** (*string*): filename for skiplock logs; empty logfile will disable logging
     - **loglevel** (*string*): sets logging level (`debug, info, warn, error, fatal, unknown`)
     - **notification** (*string*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, custom`); using `auto` will detect library if available.  See `Notification system` for more details
-    - **extensions** (*boolean*): enable or disable the class method extension.  See `ClassMethod extension` for more details
-    - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months)
+    - **extensions** (*multi*): enable or disable the class method extension.  See `ClassMethod extension` for more details
+    - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months); queued jobs can manually override using `purge` option
     - **queues** (*hash*): defines the set of queues with priorities; lower priority takes precedence
     - **workers** (*integer*) sets the maximum number of processes when running in standalone mode using the `skiplock` executable; setting this to **0** will enable **async mode**
 
@@ -100,19 +100,26 @@ Inside the Rails application:
     ```ruby
     MyJob.perform_later
     ```
-- Skiplock supports all ActiveJob features
+- Skiplock supports all ActiveJob features and options
     ```ruby
     MyJob.set(queue: 'my_queue', wait: 5.minutes, priority: 10).perform_later(1,2,3)
+    MyJob.set(wait_until: Day.tomorrow.noon).perform_later(1,2,3)
+    ```
+- Skiplock supports custom options which override the global `Skiplock` configuration options for specified jobs
+    - **purge** (*boolean*): whether to remove this job after it has ran successfully
+    - **max_retries** (*integer*): set maximum retry attempt for this job
+    ```ruby
+    MyJob.set(purge: false, max_retries: 5).perform_later(1,2,3)
     ```
 Outside the Rails application:
 - queue the jobs by inserting the job records directly to the database table
     ```sql
     INSERT INTO skiplock.jobs(job_class) VALUES ('MyJob');
     ```
-- with scheduling, priority, queue and arguments
+- with scheduling, priority, queue, arguments and custom options
     ```sql
     INSERT INTO skiplock.jobs(job_class, queue_name, priority, scheduled_at, data)
-      VALUES ('MyJob', 'my_queue', 10, NOW() + INTERVAL '5 min', '{"arguments":[1,2,3]}');
+      VALUES ('MyJob', 'my_queue', 10, NOW() + INTERVAL '5 min', '{"arguments":[1,2,3],"options":{"purge":false,"max_retries":5}}');
     ```
 ## Queue priority vs Job priority
 *Why do queues use priorities when jobs already have priorities?*
@@ -166,15 +173,21 @@ If the `retry_on` block is not defined, then the built-in retry system of `Skipl
   # config/initializers/skiplock.rb
   Skiplock.on_error do |ex, previous|
     if ex.backtrace != previous.try(:backtrace)
-      # sends custom email on new exceptions only
+      # sends text message using Amazon SNS on new exceptions only
       # the same repeated exceptions will only be sent once to avoid SPAM
       # NOTE: exceptions generated from Job executions will not provide 'previous' exceptions
+      sms = Aws::SNS::Client.new(region: 'us-west-2', access_key_id: Rails.application.credentials[:aws][:access_key_id], secret_access_key: Rails.application.credentials[:aws][:secret_access_key])
+      sms.publish({ phone_number: '+122233334444', message: "Exception: #{ex.message}"[0..130] })
     end
   end
   # supports multiple 'on_error' event callbacks
 ```
 ## ClassMethod extension
-`Skiplock` can add extension to allow all class methods to be performed as a background job; it is disabled in the default configuration.  To enable, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`.
+`Skiplock` can add extension to allow class methods to be performed as a background job; it is disabled in the default configuration.  To enable globally for all classes and modules, edit the `config/skiplock.yml` configuration file and change `extensions` to `true`; this can expose remote execution if the `skiplock.jobs` database table is not secured properly.  To enable extension for specific classes and modules only then set the configuration to an array of names of the classes and modules eg. `['MyClass', 'MyModule']`
+- An example of remote execution if the extension is enabled globally (ie: configuration is set to `true`) and attacker can insert `skiplock.jobs`
+  ```sql
+  INSERT INTO skiplock.jobs(job_class, data) VALUES ('Skiplock::Extension::ProxyJob', '{"arguments":["---\n- !ruby/module ''Kernel''\n- :system\n- - rm -rf /tmp/*\n"]}');
+  ```
 - Queue class method `generate_thumbnails` of class `Image` as background job to run as soon as possible
   ```ruby
   Image.skiplock.generate_thumbnails(height: 100, ratio: true)
@@ -189,24 +202,25 @@ If the `retry_on` block is not defined, then the built-in retry system of `Skipl
   ```
 
 ## Fault tolerant
-`Skiplock` ensures that jobs will be executed sucessfully only once even if database connection is lost during or after the job was dispatched.  Successful jobs are marked as completed or removed (with `purge_completion` turned on), and failed or interrupted jobs are marked for retry.
+`Skiplock` ensures that jobs will be executed sucessfully only once even if database connection is lost during or after the job was dispatched.  Successful jobs are marked as completed or removed (with `purge_completion` global configuration or `purge` job option); failed or interrupted jobs are marked for retry.
 
 However, when the database connection is dropped for any reasons and the commit is lost, `Skiplock` will then save the commit data to local disk (as `tmp/skiplock/<job_id>`) and synchronize with the database when the connection resumes.
 
-This also protects in-progress jobs that were terminated abruptly during a graceful shutdown with timeout; they will be queued for retry.
+This also protects long running in-progress jobs that are terminated abruptly during a graceful shutdown with timeout; these will be queued for retry.
 
 ## Scalability
 `Skiplock` can scale both vertically and horizontally.  To scale vertically, simply increase the number of `Skiplock` workers per host.  To scale horizontally, simply deploy `Skiplock` to multiple hosts sharing the same PostgreSQL database.
 
-## Statistics and counters
+## Statistics, analytics and counters
 The `skiplock.workers` database table contains all the `Skiplock` workers running on all the hosts.  Active worker will update its timestamp column (`updated_at`) every minute; and dispatched jobs would be associated with the running workers.  At any given time, a list of active workers running a list of jobs can be determined using the database table.
 
-The `skiplock.counters` database table contains all historical job dispatches, completions, expiries, failures and retries.  The counters are recorded by dates; so it's possible to get statistical data for any given day or range of dates.
+The `skiplock.jobs` database table contains all the `Skiplob` jobs.  Each job's successful execution stores the result to its `data['result']` field column.  If job completions are not purged then their execution results can be used for analytic purposes.
 
+The `skiplock.counters` database table contains all the counters for job dispatches, completions, expiries, failures and retries.  The counters are recorded by dates; so it's possible to get statistical data for any given day or range of dates.
   - **completions**: numbers of jobs completed successfully
   - **dispatches**: number of jobs dispatched for the first time (**retries** are not counted here)
-  - **expiries**: number of jobs exceeded `max_retry` and still failed to complete
-  - **failures**: number of jobs interrupted by graceful shutdown or errors (exceptions)
+  - **expiries**: number of jobs exceeded `max_retries` and still failed to complete
+  - **failures**: number of jobs interrupted by graceful shutdown or unable to complete due to errors (exceptions)
   - **retries**: number of jobs dispatched for retrying
 
 Code examples of gathering counters information:

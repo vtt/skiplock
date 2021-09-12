@@ -4,21 +4,6 @@ module Skiplock
     attr_accessor :activejob_retry
     belongs_to :worker, inverse_of: :jobs, required: false
 
-    # resynchronize jobs that could not commit to database and retry any abandoned jobs
-    def self.cleanup(purge_completion: true, max_retries: 20)
-      Dir.mkdir('tmp/skiplock') unless Dir.exist?('tmp/skiplock')
-      Dir.glob('tmp/skiplock/*').each do |f|
-        job_from_db = self.find_by(id: File.basename(f), running: true)
-        disposed = true
-        if job_from_db
-          job, ex = YAML.load_file(f) rescue nil
-          disposed = job.dispose(ex, purge_completion: purge_completion, max_retries: max_retries) if job
-        end
-        (File.delete(f) rescue nil) if disposed
-      end
-      self.where(running: true).where.not(worker_id: Worker.ids).update_all(running: false, worker_id: nil)
-    end
-
     def self.dispatch(purge_completion: true, max_retries: 20)
       job = nil
       self.connection.transaction do
@@ -35,41 +20,57 @@ module Skiplock
 
     def self.enqueue_at(activejob, timestamp)
       timestamp = Time.at(timestamp) if timestamp
-      if Thread.current[:skiplock_dispatch_job].try(:id) == activejob.job_id
-        Thread.current[:skiplock_dispatch_job].activejob_retry = true
-        Thread.current[:skiplock_dispatch_job].executions = activejob.executions
-        Thread.current[:skiplock_dispatch_job].exception_executions = activejob.exception_executions
-        Thread.current[:skiplock_dispatch_job].scheduled_at = timestamp
-        Thread.current[:skiplock_dispatch_job]
+      if Thread.current[:skiplock_job].try(:id) == activejob.job_id
+        Thread.current[:skiplock_job].activejob_retry = true
+        Thread.current[:skiplock_job].executions = activejob.executions
+        Thread.current[:skiplock_job].exception_executions = activejob.exception_executions
+        Thread.current[:skiplock_job].scheduled_at = timestamp
+        Thread.current[:skiplock_job]
       else
+        options = activejob.instance_variable_get('@skiplock_options') || {}
         serialize = activejob.serialize
-        self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'] }, 'scheduled_at' => timestamp))
+        self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'], 'options' => options }, 'scheduled_at' => timestamp))
       end
     end
 
-    def self.reset_retry_schedules
-      self.where('scheduled_at > NOW() AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL').update_all(scheduled_at: nil, updated_at: Time.now)
+    # resynchronize jobs that could not commit to database and retry any abandoned jobs
+    def self.flush
+      Dir.mkdir('tmp/skiplock') unless Dir.exist?('tmp/skiplock')
+      Dir.glob('tmp/skiplock/*').each do |f|
+        disposed = true
+        if self.exists?(id: File.basename(f), running: true)
+          job = Marshal.load(File.binread(f)) rescue nil
+          disposed = job.dispose if job.is_a?(Skiplock::Job)
+        end
+        (File.delete(f) rescue nil) if disposed
+      end
+      self.where(running: true).where.not(worker_id: Worker.ids).update_all(running: false, worker_id: nil)
+      true
     end
 
-    def dispose(ex, purge_completion: true, max_retries: 20)
-      yaml = [self, ex].to_yaml
+    def self.reset_retry_schedules
+      self.where('scheduled_at > NOW() AND executions > 0 AND expired_at IS NULL AND finished_at IS NULL').update_all(scheduled_at: nil, updated_at: Time.now)
+    end
+
+    def dispose
+      return unless @max_retries
+      dump = Marshal.dump(self)
       purging = false
       self.running = false
       self.worker_id = nil
       self.updated_at = Time.now > self.updated_at ? Time.now : self.updated_at + 1 # in case of clock drifting
-      if ex
-        self.exception_executions ||= {}
-        self.exception_executions["[#{ex.class.name}]"] = self.exception_executions["[#{ex.class.name}]"].to_i + 1 unless self.activejob_retry
-        if self.executions.to_i >= max_retries || self.activejob_retry
+      if @exception
+        self.exception_executions["[#{@exception.class.name}]"] = self.exception_executions["[#{@exception.class.name}]"].to_i + 1 unless self.activejob_retry
+        if (self.executions.to_i >= @max_retries + 1) || self.activejob_retry
           self.expired_at = Time.now
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
         end
       elsif self.finished_at
         if self.cron
-          self.data ||= {}
-          self.data['crons'] = (self.data['crons'] || 0) + 1
-          self.data['last_cron_at'] = self.finished_at.utc.to_s
+          self.data['cron'] ||= {}
+          self.data['cron']['executions'] = self.data['cron']['executions'].to_i + 1
+          self.data['cron']['last_finished_at'] = self.finished_at.utc.to_s
           next_cron_at = Cron.next_schedule_at(self.cron)
           if next_cron_at
             # update job to record completions counter before resetting finished_at to nil
@@ -82,13 +83,13 @@ module Skiplock
             Skiplock.logger.error("[Skiplock] ERROR: Invalid CRON '#{self.cron}' for Job #{self.job_class}") if Skiplock.logger
             purging = true
           end
-        elsif purge_completion
+        elsif @purge == true
           purging = true
         end
       end
       purging ? self.delete : self.update_columns(self.attributes.slice(*self.changes.keys))
     rescue Exception => e
-      File.write("tmp/skiplock/#{self.id}", yaml) rescue nil
+      File.binwrite("tmp/skiplock/#{self.id}", dump) rescue nil
       if Skiplock.logger
         Skiplock.logger.error(e.to_s)
         Skiplock.logger.error(e.backtrace.join("\n"))
@@ -98,26 +99,31 @@ module Skiplock
     end
 
     def execute(purge_completion: true, max_retries: 20)
+      raise 'Job has already been completed' if self.finished_at
       Skiplock.logger.info("[Skiplock] Performing #{self.job_class} (#{self.id}) from queue '#{self.queue_name || 'default'}'...") if Skiplock.logger
       self.data ||= {}
+      self.data.delete('result')
       self.exception_executions ||= {}
       self.activejob_retry = false
+      @max_retries = (self.data['options'].key?('max_retries') ? self.data['options']['max_retries'].to_i : max_retries) rescue max_retries
+      @max_retries = 20 if @max_retries < 0 || @max_retries > 20
+      @purge = (self.data['options'].key?('purge') ? self.data['options']['purge'] : purge_completion) rescue purge_completion
       job_data = self.attributes.slice('job_class', 'queue_name', 'locale', 'timezone', 'priority', 'executions', 'exception_executions').merge('job_id' => self.id, 'enqueued_at' => self.updated_at, 'arguments' => (self.data['arguments'] || []))
       self.executions = self.executions.to_i + 1
-      Thread.current[:skiplock_dispatch_job] = self
+      Thread.current[:skiplock_job] = self
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       begin
-        ActiveJob::Base.execute(job_data)
-        self.finished_at = Time.now unless self.activejob_retry
+        self.data['result'] = ActiveJob::Base.execute(job_data)
       rescue Exception => ex
-        Skiplock.on_errors.each { |p| p.call(ex) }
+        @exception = ex
+        Skiplock.on_errors.each { |p| p.call(@exception) }
       end
       if Skiplock.logger
-        if ex || self.activejob_retry
+        if @exception || self.activejob_retry
           Skiplock.logger.error("[Skiplock] Job #{self.job_class} (#{self.id}) was interrupted by an exception#{ ' (rescued and retried by ActiveJob)' if self.activejob_retry }")
-          if ex
-            Skiplock.logger.error(ex.to_s)
-            Skiplock.logger.error(ex.backtrace.join("\n"))
+          if @exception
+            Skiplock.logger.error(@exception.to_s)
+            Skiplock.logger.error(@exception.backtrace.join("\n"))
           end
         else
           end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -130,7 +136,8 @@ module Skiplock
         end
       end
     ensure
-      self.dispose(ex, purge_completion: purge_completion, max_retries: max_retries)
+      self.finished_at ||= Time.now if self.data.key?('result') && !self.activejob_retry
+      self.dispose
     end
   end
 end

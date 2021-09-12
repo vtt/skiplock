@@ -6,13 +6,12 @@ module Skiplock
       @config.symbolize_keys!
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config.merge!(config)
-      @config[:hostname] = `hostname -f`.strip
+      @hostname = Socket.gethostname
       configure
       setup_logger
-      Module.__send__(:include, Skiplock::Extension) if @config[:extensions] == true
       if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
-        cleanup_workers
-        @worker = create_worker
+        Worker.cleanup(@hostname)
+        @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
         @worker.start(**@config)
         at_exit { @worker.shutdown }
       end
@@ -28,8 +27,8 @@ module Skiplock
       @config[:workers] = 1 if @config[:workers] <= 0
       @config[:standalone] = true
       banner
-      cleanup_workers
-      @worker = create_worker
+      Worker.cleanup(@hostname)
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
       @parent_id = Process.pid
       @shutdown = false
       Signal.trap('INT') { @shutdown = true }
@@ -38,7 +37,7 @@ module Skiplock
       (@config[:workers] - 1).times do |n|
         fork do
           sleep 1
-          worker = create_worker(master: false)
+          worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
           worker.start(worker_num: n + 1, **@config)
           loop do
             sleep 0.5
@@ -81,22 +80,6 @@ module Skiplock
       @logger.warn "[Skiplock] Custom notification has no registered 'on_error' callback" if Skiplock.on_errors.count == 0
     end
 
-    def cleanup_workers
-      Rails.application.eager_load! if Rails.env.development?
-      delete_ids = []
-      Worker.where(hostname: @config[:hostname]).each do |worker|
-        sid = Process.getsid(worker.pid) rescue nil
-        delete_ids << worker.id if worker.sid != sid || worker.updated_at < 10.minutes.ago
-      end
-      Worker.where(id: delete_ids).delete_all if delete_ids.count > 0
-    end
-
-    def create_worker(master: true)
-      Worker.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: @config[:hostname], capacity: @config[:max_threads])
-    rescue
-      Worker.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: @config[:hostname], capacity: @config[:max_threads])
-    end
-
     def configure
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
@@ -137,21 +120,27 @@ module Skiplock
       else
         @config[:notification] = 'custom'
       end
+      Rails.application.eager_load! if Rails.env.development?
+      if @config[:extensions] == true
+        Module.__send__(:include, Skiplock::Extension)
+      elsif @config[:extensions].is_a?(Array)
+        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
+      end
       Skiplock.on_errors.freeze unless Skiplock.on_errors.frozen?
     end
 
     def setup_logger
-      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
+      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s.downcase)
       @logger = ActiveSupport::Logger.new(STDOUT)
-      @logger.level = @config[:loglevel].to_sym
+      @logger.level = @config[:loglevel].downcase.to_sym
       Skiplock.logger = @logger
       if @config[:logfile].to_s.length > 0
         @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
         ActiveJob::Base.logger = nil
       end
     rescue Exception => ex
-      puts "Exception with logger: #{ex.to_s}"
-      puts ex.backtrace.join("\n")
+      @logger.error "Exception with logger: #{ex.to_s}"
+      @logger.error ex.backtrace.join("\n")
       Skiplock.on_errors.each { |p| p.call(ex) }
     end
   end
