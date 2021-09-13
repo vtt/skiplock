@@ -62,12 +62,13 @@ module Skiplock
               if Time.now.to_f >= next_schedule_at && @executor.remaining_capacity > 0
                 job = nil
                 connection.transaction do
-                  job = Job.find_by_sql("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
-                  job = Job.find_by_sql("UPDATE skiplock.jobs SET running = TRUE, worker_id = '#{self.id}', updated_at = NOW() WHERE id = '#{job.id}' RETURNING *").first if job && job.scheduled_at.to_f <= Time.now.to_f
+                  result = connection.select_all("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
+                  result = connection.select_all("UPDATE skiplock.jobs SET running = TRUE, worker_id = '#{self.id}', updated_at = NOW() WHERE id = '#{result['id']}' RETURNING *").first if result && result['scheduled_at'].to_f <= Time.now.to_f
+                  job = Job.instantiate(result) if result
                 end
                 if job.try(:running)
                   @executor.post do
-                    job.execute(purge_completion: @config[:purge_completion], max_retries: @config[:max_retries])
+                    Rails.application.executor.wrap { job.execute(purge_completion: @config[:purge_completion], max_retries: @config[:max_retries]) }
                   end
                 else
                   next_schedule_at = (job ? job.scheduled_at.to_f : Float::INFINITY)
