@@ -4,16 +4,16 @@ module Skiplock
       @config = Skiplock::DEFAULT_CONFIG.dup
       @config.merge!(YAML.load_file('config/skiplock.yml')) rescue nil
       @config.symbolize_keys!
-      @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
-      @hostname = Socket.gethostname
+      async if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
+    end
+
+    def async
       configure
       setup_logger
-      if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
-        Worker.cleanup(@hostname)
-        @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
-        @worker.start(**@config)
-        at_exit { @worker.shutdown }
-      end
+      Worker.cleanup(@hostname)
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
+      @worker.start(**@config)
+      at_exit { @worker.shutdown }
     rescue Exception => ex
       @logger.error(ex.to_s)
       @logger.error(ex.backtrace.join("\n"))
@@ -21,6 +21,8 @@ module Skiplock
 
     def standalone(**options)
       @config.merge!(options)
+      configure
+      setup_logger
       Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
       Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
       @config[:workers] = 1 if @config[:workers] <= 0
@@ -34,6 +36,7 @@ module Skiplock
       Signal.trap('TERM') { @shutdown = true }
       Signal.trap('HUP') { setup_logger }
       (@config[:workers] - 1).times do |n|
+        sleep 0.2
         fork do
           sleep 1
           worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
@@ -53,7 +56,9 @@ module Skiplock
       @logger.info "[Skiplock] Terminating signal... Waiting for jobs to finish (up to #{@config[:graceful_shutdown]} seconds)..." if @config[:graceful_shutdown]
       Process.waitall
       @worker.shutdown
-      @logger.info "[Skiplock] Shutdown completed."
+    rescue Exception => ex
+      @logger.error(ex.to_s)
+      @logger.error(ex.backtrace.join("\n"))
     end
 
     private
@@ -80,6 +85,8 @@ module Skiplock
     end
 
     def configure
+      @hostname = Socket.gethostname
+      @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
       @config[:max_retries] = 20 if @config[:max_retries] > 20
@@ -100,6 +107,12 @@ module Skiplock
           raise "Unable to detect any known exception notification library. Please define custom 'on_error' event callbacks and change to 'custom' notification in 'config/skiplock.yml'"
         end
       end
+      Rails.application.eager_load! if Rails.env.development?
+      if @config[:extensions] == true
+        Module.__send__(:include, Skiplock::Extension)
+      elsif @config[:extensions].is_a?(Array)
+        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
+      end
       case @config[:notification]
       when 'airbrake'
         raise 'airbrake gem not found' unless defined?(Airbrake)
@@ -119,19 +132,13 @@ module Skiplock
       else
         @config[:notification] = 'custom'
       end
-      Rails.application.eager_load! if Rails.env.development?
-      if @config[:extensions] == true
-        Module.__send__(:include, Skiplock::Extension)
-      elsif @config[:extensions].is_a?(Array)
-        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
-      end
-      Skiplock.on_errors.freeze unless Skiplock.on_errors.frozen?
+      Skiplock.on_errors.freeze
     end
 
     def setup_logger
-      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s.downcase)
+      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
       @logger = ActiveSupport::Logger.new(STDOUT)
-      @logger.level = @config[:loglevel].downcase.to_sym
+      @logger.level = @config[:loglevel].to_sym
       Skiplock.logger = @logger
       if @config[:logfile].to_s.length > 0
         @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))

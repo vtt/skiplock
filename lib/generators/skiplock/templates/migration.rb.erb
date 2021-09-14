@@ -55,7 +55,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
               END IF;
             ELSIF (OLD.finished_at IS NULL AND record.finished_at IS NOT NULL) THEN
               INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
-            ELSIF (OLD.expired_at IS NULL AND record.expired_at IS NOT NULL) THEN
+            ELSIF (OLD.running = TRUE AND record.running = FALSE AND record.expired_at IS NOT NULL) THEN
               INSERT INTO skiplock.counters (day,expiries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
             ELSIF (OLD.running = TRUE AND record.running = FALSE AND record.expired_at IS NULL AND record.finished_at IS NULL) THEN
               INSERT INTO skiplock.counters (day,failures) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET failures = skiplock.counters.failures + 1;

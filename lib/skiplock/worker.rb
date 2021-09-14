@@ -23,12 +23,13 @@ module Skiplock
         Job.flush
         Cron.setup
       end
+      @num = worker_num
       @config = config
       @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
       @running = true
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads] + 1, max_threads: @config[:max_threads] + 1, max_queue: @config[:max_threads], idletime: 60, auto_terminate: true, fallback_policy: :discard)
       @executor.post { run }
-      Process.setproctitle("skiplock-#{self.master ? 'master[0]' : 'worker[' + worker_num.to_s + ']'}") if @config[:standalone]
+      Process.setproctitle("skiplock: #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} [#{Rails.application.class.name.deconstantize.downcase}:#{Rails.env}]") if @config[:standalone]
     end
 
     def shutdown
@@ -36,12 +37,15 @@ module Skiplock
       @executor.shutdown
       @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
       self.delete
+      Skiplock.logger.info "[Skiplock] Shutdown of #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} (PID: #{self.pid}) was completed."
     end
 
     private
 
     def run
+      sleep 3
       ActiveRecord::Base.connection_pool.with_connection do |connection|
+        Skiplock.logger.info "[Skiplock] Starting in #{@config[:standalone] ? 'standalone' : 'async'} mode (PID: #{self.pid}) with #{@config[:max_threads]} max threads as #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2}..."
         connection.exec_query('LISTEN "skiplock::jobs"')
         error = false
         next_schedule_at = Time.now.to_f

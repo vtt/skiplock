@@ -1,7 +1,7 @@
 module Skiplock
   class Job < ActiveRecord::Base
     self.implicit_order_column = 'updated_at'
-    attr_accessor :activejob_retry
+    attr_accessor :activejob_error
     belongs_to :worker, inverse_of: :jobs, required: false
 
     def self.dispatch(purge_completion: true, max_retries: 20)
@@ -19,16 +19,16 @@ module Skiplock
     end
 
     def self.enqueue_at(activejob, timestamp)
+      options = activejob.instance_variable_get('@skiplock_options') || {}
       timestamp = Time.at(timestamp) if timestamp
       if Thread.current[:skiplock_job].try(:id) == activejob.job_id
-        Thread.current[:skiplock_job].activejob_retry = true
-        Thread.current[:skiplock_job].data['activejob_retry'] = true
+        Thread.current[:skiplock_job].activejob_error = options[:error]
+        Thread.current[:skiplock_job].data['activejob_error'] = true
         Thread.current[:skiplock_job].executions = activejob.executions
         Thread.current[:skiplock_job].exception_executions = activejob.exception_executions
         Thread.current[:skiplock_job].scheduled_at = timestamp
         Thread.current[:skiplock_job]
       else
-        options = activejob.instance_variable_get('@skiplock_options') || {}
         serialize = activejob.serialize
         self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'], 'options' => options }, 'scheduled_at' => timestamp))
       end
@@ -61,8 +61,8 @@ module Skiplock
       self.worker_id = nil
       self.updated_at = Time.now > self.updated_at ? Time.now : self.updated_at + 1 # in case of clock drifting
       if @exception
-        self.exception_executions["[#{@exception.class.name}]"] = self.exception_executions["[#{@exception.class.name}]"].to_i + 1 unless self.activejob_retry
-        if (self.executions.to_i >= @max_retries + 1) || self.data.key?('activejob_retry') || @exception.is_a?(Skiplock::Extension::ProxyError)
+        self.exception_executions["[#{@exception.class.name}]"] = self.exception_executions["[#{@exception.class.name}]"].to_i + 1 unless self.data.key?('activejob_error')
+        if (self.executions.to_i >= @max_retries + 1) || self.data.key?('activejob_error') || @exception.is_a?(Skiplock::Extension::ProxyError)
           self.expired_at = Time.now
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
@@ -103,11 +103,12 @@ module Skiplock
 
     def execute(purge_completion: true, max_retries: 20)
       raise 'Job has already been completed' if self.finished_at
+      self.update_columns(running: true, updated_at: Time.now) unless self.running
       Skiplock.logger.info("[Skiplock] Performing #{self.job_class} (#{self.id}) from queue '#{self.queue_name || 'default'}'...") if Skiplock.logger
       self.data ||= {}
       self.data.delete('result')
       self.exception_executions ||= {}
-      self.activejob_retry = false
+      self.activejob_error = nil
       @max_retries = (self.data['options'].key?('max_retries') ? self.data['options']['max_retries'].to_i : max_retries) rescue max_retries
       @max_retries = 20 if @max_retries < 0 || @max_retries > 20
       @purge = (self.data['options'].key?('purge') ? self.data['options']['purge'] : purge_completion) rescue purge_completion
@@ -122,8 +123,8 @@ module Skiplock
         Skiplock.on_errors.each { |p| p.call(@exception) }
       end
       if Skiplock.logger
-        if @exception || self.activejob_retry
-          Skiplock.logger.error("[Skiplock] Job #{self.job_class} (#{self.id}) was interrupted by an exception#{ ' (rescued and retried by ActiveJob)' if self.activejob_retry }")
+        if @exception || self.activejob_error
+          Skiplock.logger.error("[Skiplock] Job #{self.job_class} (#{self.id}) was interrupted by an exception#{ ' (rescued and retried by ActiveJob)' if self.activejob_error }")
           if @exception
             Skiplock.logger.error(@exception.to_s)
             Skiplock.logger.error(@exception.backtrace.join("\n"))
@@ -138,8 +139,9 @@ module Skiplock
           Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{self.id}) from queue '#{self.queue_name || 'default'}' in #{end_time - start_time} seconds"
         end
       end
+      @exception || self.activejob_error || self.data['result']
     ensure
-      self.finished_at ||= Time.now if self.data.key?('result') && !self.activejob_retry
+      self.finished_at ||= Time.now if self.data.key?('result') && !self.activejob_error
       self.dispose
     end
   end
