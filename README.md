@@ -172,14 +172,10 @@ If the `retry_on` block is not defined, then the built-in retry system of `Skipl
 `Skiplock` can use existing exception notification library to notify errors and exceptions.  It supports `airbrake`, `bugsnag`, and `exception_notification`.  Custom notification can also be called whenever an exception occurs; it can be configured in an initializer like below:
 ```ruby
   # config/initializers/skiplock.rb
-  Skiplock.on_error do |ex, previous|
-    if ex.backtrace != previous.try(:backtrace)
-      # sends text message using Amazon SNS on new exceptions only
-      # the same repeated exceptions will only be sent once to avoid SPAM
-      # NOTE: exceptions generated from Job executions will not provide 'previous' exceptions
-      sms = Aws::SNS::Client.new(region: 'us-west-2', access_key_id: Rails.application.credentials[:aws][:access_key_id], secret_access_key: Rails.application.credentials[:aws][:secret_access_key])
-      sms.publish({ phone_number: '+122233334444', message: "Exception: #{ex.message}"[0..130] })
-    end
+  Skiplock.on_error do |ex|
+    # sends text message using Amazon SNS
+    sms = Aws::SNS::Client.new(region: 'us-west-2', access_key_id: Rails.application.credentials[:aws][:access_key_id], secret_access_key: Rails.application.credentials[:aws][:secret_access_key])
+    sms.publish(phone_number: '+12223334444', message: "Exception: #{ex.message}"[0..130])
   end
   # supports multiple 'on_error' event callbacks
 ```

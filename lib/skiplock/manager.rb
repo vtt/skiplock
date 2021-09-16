@@ -116,18 +116,18 @@ module Skiplock
       case @config[:notification]
       when 'airbrake'
         raise 'airbrake gem not found' unless defined?(Airbrake)
-        Skiplock.on_error do |ex, previous|
-          Airbrake.notify_sync(ex) unless ex.backtrace == previous.try(:backtrace)
+        Skiplock.on_error do |ex|
+          Airbrake.notify_sync(ex)
         end
       when 'bugsnag'
         raise 'bugsnag gem not found' unless defined?(Bugsnag)
-        Skiplock.on_error do |ex, previous|
-          Bugsnag.notify(ex) unless ex.backtrace == previous.try(:backtrace)
+        Skiplock.on_error do |ex|
+          Bugsnag.notify(ex)
         end
       when 'exception_notification'
         raise 'exception_notification gem not found' unless defined?(ExceptionNotifier)
-        Skiplock.on_error do |ex, previous|
-          ExceptionNotifier.notify_exception(ex) unless ex.backtrace == previous.try(:backtrace)
+        Skiplock.on_error do |ex|
+          ExceptionNotifier.notify_exception(ex)
         end
       else
         @config[:notification] = 'custom'
