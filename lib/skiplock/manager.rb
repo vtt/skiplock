@@ -4,6 +4,12 @@ module Skiplock
       @config = Skiplock::DEFAULT_CONFIG.dup
       @config.merge!(YAML.load_file('config/skiplock.yml')) rescue nil
       @config.symbolize_keys!
+      if @config[:extensions] == true
+        Module.__send__(:include, Skiplock::Extension)
+      elsif @config[:extensions].is_a?(Array)
+        Rails.application.eager_load! if Rails.env.development?
+        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
+      end
       async if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
     end
 
@@ -106,12 +112,6 @@ module Skiplock
         else
           raise "Unable to detect any known exception notification library. Please define custom 'on_error' event callbacks and change to 'custom' notification in 'config/skiplock.yml'"
         end
-      end
-      Rails.application.eager_load! if Rails.env.development?
-      if @config[:extensions] == true
-        Module.__send__(:include, Skiplock::Extension)
-      elsif @config[:extensions].is_a?(Array)
-        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
       case @config[:notification]
       when 'airbrake'
