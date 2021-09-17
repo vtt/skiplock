@@ -1,7 +1,10 @@
 module Skiplock
   class Job < ActiveRecord::Base
     self.implicit_order_column = 'updated_at'
-    attr_accessor :activejob_error
+    attribute :activejob_error
+    attribute :exception
+    attribute :max_retries, :integer
+    attribute :purge, :boolean
     belongs_to :worker, inverse_of: :jobs, required: false
 
     def self.dispatch(purge_completion: true, max_retries: 20)
@@ -40,7 +43,7 @@ module Skiplock
       Dir.glob('tmp/skiplock/*').each do |f|
         disposed = true
         if self.exists?(id: File.basename(f), running: true)
-          job = Marshal.load(File.binread(f)) rescue nil
+          job = YAML.load_file(f) rescue nil
           disposed = job.dispose if job.is_a?(Skiplock::Job)
         end
         (File.delete(f) rescue nil) if disposed
@@ -54,15 +57,15 @@ module Skiplock
     end
 
     def dispose
-      return unless @max_retries
-      dump = Marshal.dump(self)
+      return unless self.max_retries
+      yaml = self.to_yaml
       purging = false
       self.running = false
       self.worker_id = nil
       self.updated_at = Time.now > self.updated_at ? Time.now : self.updated_at + 1 # in case of clock drifting
-      if @exception
-        self.exception_executions["[#{@exception.class.name}]"] = self.exception_executions["[#{@exception.class.name}]"].to_i + 1 unless self.data.key?('activejob_error')
-        if (self.executions.to_i >= @max_retries + 1) || self.data.key?('activejob_error') || @exception.is_a?(Skiplock::Extension::ProxyError)
+      if self.exception
+        self.exception_executions["[#{self.exception.class.name}]"] = self.exception_executions["[#{self.exception.class.name}]"].to_i + 1 unless self.data.key?('activejob_error')
+        if (self.executions.to_i >= self.max_retries + 1) || self.data.key?('activejob_error') || self.exception.is_a?(Skiplock::Extension::ProxyError)
           self.expired_at = Time.now
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
@@ -86,13 +89,13 @@ module Skiplock
             Skiplock.logger.error("[Skiplock] ERROR: Invalid CRON '#{self.cron}' for Job #{self.job_class}") if Skiplock.logger
             purging = true
           end
-        elsif @purge == true
+        elsif self.purge == true
           purging = true
         end
       end
-      purging ? self.delete : self.update_columns(self.attributes.slice(*self.changes.keys))
+      purging ? self.delete : self.update_columns(self.attributes.slice(*(self.changes.keys & self.class.column_names)))
     rescue Exception => e
-      File.binwrite("tmp/skiplock/#{self.id}", dump) rescue nil
+      File.write("tmp/skiplock/#{self.id}", yaml) rescue nil
       if Skiplock.logger
         Skiplock.logger.error(e.to_s)
         Skiplock.logger.error(e.backtrace.join("\n"))
@@ -109,9 +112,9 @@ module Skiplock
       self.data.delete('result')
       self.exception_executions ||= {}
       self.activejob_error = nil
-      @max_retries = (self.data['options'].key?('max_retries') ? self.data['options']['max_retries'].to_i : max_retries) rescue max_retries
-      @max_retries = 20 if @max_retries < 0 || @max_retries > 20
-      @purge = (self.data['options'].key?('purge') ? self.data['options']['purge'] : purge_completion) rescue purge_completion
+      self.max_retries = (self.data['options'].key?('max_retries') ? self.data['options']['max_retries'].to_i : max_retries) rescue max_retries
+      self.max_retries = 20 if self.max_retries < 0 || self.max_retries > 20
+      self.purge = (self.data['options'].key?('purge') ? self.data['options']['purge'] : purge_completion) rescue purge_completion
       job_data = self.attributes.slice('job_class', 'queue_name', 'locale', 'timezone', 'priority', 'executions', 'exception_executions').merge('job_id' => self.id, 'enqueued_at' => self.updated_at, 'arguments' => (self.data['arguments'] || []))
       self.executions = self.executions.to_i + 1
       Thread.current[:skiplock_job] = self
@@ -119,15 +122,15 @@ module Skiplock
       begin
         self.data['result'] = ActiveJob::Base.execute(job_data)
       rescue Exception => ex
-        @exception = ex
-        Skiplock.on_errors.each { |p| p.call(@exception) }
+        self.exception = ex
+        Skiplock.on_errors.each { |p| p.call(ex) }
       end
       if Skiplock.logger
-        if @exception || self.activejob_error
+        if self.exception || self.activejob_error
           Skiplock.logger.error("[Skiplock] Job #{self.job_class} (#{self.id}) was interrupted by an exception#{ ' (rescued and retried by ActiveJob)' if self.activejob_error }")
-          if @exception
-            Skiplock.logger.error(@exception.to_s)
-            Skiplock.logger.error(@exception.backtrace.join("\n"))
+          if self.exception
+            Skiplock.logger.error(self.exception.to_s)
+            Skiplock.logger.error(self.exception.backtrace.join("\n"))
           end
         else
           end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -139,7 +142,7 @@ module Skiplock
           Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{self.id}) from queue '#{self.queue_name || 'default'}' in #{end_time - start_time} seconds"
         end
       end
-      @exception || self.activejob_error || self.data['result']
+      self.exception || self.activejob_error || self.data['result']
     ensure
       self.finished_at ||= Time.now if self.data.key?('result') && !self.activejob_error
       self.dispose
