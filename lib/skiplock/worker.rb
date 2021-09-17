@@ -103,7 +103,7 @@ module Skiplock
             Skiplock.logger.error(ex.backtrace.join("\n"))
             report_exception = true
             # if error is with database connection then only report if it persists longer than 1 minute
-            if ex.is_a?(::PG::ConnectionBad)
+            if ex.is_a?(::PG::ConnectionBad) ||ex.is_a?(::PG::UnableToSend) || ex.message.include?('Bad file descriptor')
               report_exception = false if pg_exception_timestamp.nil? || Process.clock_gettime(Process::CLOCK_MONOTONIC) - pg_exception_timestamp <= 60
               pg_exception_timestamp ||= Process.clock_gettime(Process::CLOCK_MONOTONIC)
             end
