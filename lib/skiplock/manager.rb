@@ -4,18 +4,18 @@ module Skiplock
       @config = Skiplock::DEFAULT_CONFIG.dup
       @config.merge!(YAML.load_file('config/skiplock.yml')) rescue nil
       @config.symbolize_keys!
+      Rails.application.eager_load! if Rails.env.development?
       if @config[:extensions] == true
         Module.__send__(:include, Skiplock::Extension)
       elsif @config[:extensions].is_a?(Array)
-        Rails.application.eager_load! if Rails.env.development?
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
       async if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
     end
 
     def async
-      configure
       setup_logger
+      configure
       Worker.cleanup(@hostname)
       @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
       @worker.start(**@config)
@@ -27,22 +27,20 @@ module Skiplock
 
     def standalone(**options)
       @config.merge!(options)
-      configure
-      setup_logger
-      Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
-      Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
-      @config[:workers] = 1 if @config[:workers] <= 0
       @config[:standalone] = true
+      @config[:workers] = 1 if @config[:workers] <= 0
+      setup_logger
+      configure
       banner
-      Worker.cleanup(@hostname)
-      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
       @parent_id = Process.pid
       @shutdown = false
       Signal.trap('INT') { @shutdown = true }
       Signal.trap('TERM') { @shutdown = true }
       Signal.trap('HUP') { setup_logger }
+      Worker.cleanup(@hostname)
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
+      ActiveRecord::Base.connection.disconnect! if @config[:workers] > 1
       (@config[:workers] - 1).times do |n|
-        sleep 0.2
         fork do
           sleep 1
           worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
@@ -54,6 +52,7 @@ module Skiplock
           worker.shutdown
         end
       end
+      ActiveRecord::Base.establish_connection if @config[:workers] > 1
       @worker.start(**@config)
       loop do
         sleep 0.5
@@ -143,6 +142,10 @@ module Skiplock
       if @config[:logfile].to_s.length > 0
         @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
         ActiveJob::Base.logger = nil
+      end
+      if @config[:standalone]
+        Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
+        Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
       end
     rescue Exception => ex
       @logger.error "Exception with logger: #{ex.to_s}"
