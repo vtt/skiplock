@@ -85,6 +85,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     Usage: skiplock [options]
       -e, --environment STRING         Rails environment
       -l, --logfile STRING             Log filename
+      -L, --loglevel STRING            Log level (debug, info, warn, error, fatal, unknown)
       -s, --graceful-shutdown NUM      Number of seconds to wait for graceful shutdown
       -r, --max-retries NUM            Number of maxixum retries
       -t, --max-threads NUM            Number of maximum threads

@@ -43,6 +43,7 @@ module Skiplock
       (@config[:workers] - 1).times do |n|
         fork do
           sleep 1
+          ActiveRecord::Base.establish_connection
           worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
           worker.start(worker_num: n + 1, **@config)
           loop do
@@ -90,7 +91,7 @@ module Skiplock
     end
 
     def configure
-      @hostname = Socket.gethostname
+      @hostname = Socket.ip_address_list.reject(&:ipv4_loopback?).reject(&:ipv6?).map(&:ip_address).join('|')
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0
