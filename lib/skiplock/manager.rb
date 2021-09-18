@@ -10,7 +10,7 @@ module Skiplock
       elsif @config[:extensions].is_a?(Array)
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
-      async if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
+      (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
     end
 
     def async
@@ -18,6 +18,7 @@ module Skiplock
       configure
       Worker.cleanup(@hostname)
       @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
+      Cron.setup if @worker.master
       @worker.start(**@config)
       at_exit { @worker.shutdown }
     rescue Exception => ex
@@ -42,7 +43,7 @@ module Skiplock
       ActiveRecord::Base.connection.disconnect! if @config[:workers] > 1
       (@config[:workers] - 1).times do |n|
         fork do
-          sleep 1
+          sleep(0.25*n + 1)
           ActiveRecord::Base.establish_connection
           worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
           worker.start(worker_num: n + 1, **@config)
@@ -146,6 +147,7 @@ module Skiplock
       end
       if @config[:standalone]
         Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
+        Rails.logger.level = @logger.level
         Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
       end
     rescue Exception => ex
