@@ -19,6 +19,7 @@ module Skiplock
       query = Job.where('cron IS NOT NULL')
       query = query.where('job_class NOT IN (?)', cronjobs) if cronjobs.count > 0
       query.delete_all
+    rescue
     end
 
     def self.next_schedule_at(cron)

@@ -238,6 +238,10 @@ Code examples of gathering counters information:
     ```ruby
     Skiplock::Counter.sum(:expiries)
     ```
+  - get all information in one query
+    ```ruby
+    Skiplock::Counter.pluck("sum(completions), sum(dispatches), sum(expiries), sum(failures), sum(retries)").first
+    ```
 
 ## Contributing
 
