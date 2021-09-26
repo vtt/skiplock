@@ -10,6 +10,7 @@ module Skiplock
       elsif @config[:extensions].is_a?(Array)
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
+      ActiveJob::Base.__send__(:include, Skiplock::Patch)
       (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
     end
 
@@ -17,7 +18,7 @@ module Skiplock
       setup_logger
       configure
       Worker.cleanup(@hostname)
-      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, actioncable: @config[:actioncable])
       Cron.setup if @worker.master
       @worker.start(**@config)
       at_exit { @worker.shutdown }
@@ -39,13 +40,13 @@ module Skiplock
       Signal.trap('TERM') { @shutdown = true }
       Signal.trap('HUP') { setup_logger }
       Worker.cleanup(@hostname)
-      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, actioncable: @config[:actioncable])
       ActiveRecord::Base.connection.disconnect! if @config[:workers] > 1
       (@config[:workers] - 1).times do |n|
         fork do
           sleep(0.25*n + 1)
           ActiveRecord::Base.establish_connection
-          worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
+          worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false, actioncable: @config[:actioncable])
           worker.start(worker_num: n + 1, **@config)
           loop do
             sleep 0.5
@@ -92,7 +93,7 @@ module Skiplock
     end
 
     def configure
-      @hostname = Socket.ip_address_list.reject(&:ipv4_loopback?).reject(&:ipv6?).map(&:ip_address).join('|')
+      @hostname = "#{`hostname -f`.strip}|#{Socket.ip_address_list.reject(&:ipv4_loopback?).reject(&:ipv6?).map(&:ip_address).join('|')}"
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
       @config[:graceful_shutdown] = nil if @config[:graceful_shutdown] < 0

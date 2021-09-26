@@ -5,6 +5,7 @@ options = {}
 begin
   op = OptionParser.new do |opts|
     opts.banner = "Usage: #{File.basename($0)} [options]"
+    opts.on('-a', '--actioncable YESNO', TrueClass, 'Actioncable notification')
     opts.on('-e', '--environment STRING', String, 'Rails environment')
     opts.on('-l', '--logfile STRING', String, 'Log filename')
     opts.on('-L', '--loglevel STRING', String, 'Log level (debug, info, warn, error, fatal, unknown)')

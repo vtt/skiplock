@@ -12,16 +12,19 @@ module Skiplock
       self.where(id: delete_ids).delete_all if delete_ids.count > 0
     end
 
-    def self.generate(capacity:, hostname:, master: true)
-      self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity)
+    def self.generate(capacity:, hostname:, master: true, actioncable: true)
+      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity)
     rescue
-      self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)
+      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)
+    ensure
+      ActionCable.server.broadcast('skiplock', { worker: { op: 'CREATE', id: worker.id, hostname: worker.hostname, master: worker.master, capacity: worker.capacity, pid: worker.pid, sid: worker.sid, created_at: worker.created_at.to_f, updated_at: worker.updated_at.to_f } }) if actioncable
     end
 
     def shutdown
       @running = false
       @executor.shutdown
       @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
+      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if @config[:actioncable]
       self.delete
       Skiplock.logger.info "[Skiplock] Shutdown of #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} (PID: #{self.pid}) was completed."
     end
@@ -32,6 +35,14 @@ module Skiplock
       @pg_config = ActiveRecord::Base.connection.raw_connection.conninfo_hash.compact
       @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
       @running = true
+      @map = ::PG::TypeMapByOid.new
+      @map.add_coder(::PG::TextDecoder::Boolean.new(oid: 16, name: 'bool'))
+      @map.add_coder(::PG::TextDecoder::Integer.new(oid: 20, name: 'int8'))
+      @map.add_coder(::PG::TextDecoder::Integer.new(oid: 21, name: 'int2'))
+      @map.add_coder(::PG::TextDecoder::Integer.new(oid: 23, name: 'int4'))
+      @map.add_coder(::PG::TextDecoder::TimestampUtc.new(oid: 1114, name: 'timestamp'))
+      @map.add_coder(::PG::TextDecoder::String.new(oid: 2950, name: 'uuid'))
+      @map.add_coder(::PG::TextDecoder::JSON.new(oid: 3802, name: 'jsonb'))
       @executor = Concurrent::ThreadPoolExecutor.new(min_threads: @config[:min_threads] + 1, max_threads: @config[:max_threads] + 1, max_queue: @config[:max_threads] + 1, idletime: 60, auto_terminate: false, fallback_policy: :abort)
       @executor.post { run }
       if @config[:standalone]
@@ -43,17 +54,10 @@ module Skiplock
     private
 
     def establish_connection
-      map = ::PG::TypeMapByOid.new
-      map.add_coder(::PG::TextDecoder::Boolean.new(oid: 16, name: 'bool'))
-      map.add_coder(::PG::TextDecoder::Integer.new(oid: 20, name: 'int8'))
-      map.add_coder(::PG::TextDecoder::Integer.new(oid: 21, name: 'int2'))
-      map.add_coder(::PG::TextDecoder::Integer.new(oid: 23, name: 'int4'))
-      map.add_coder(::PG::TextDecoder::TimestampUtc.new(oid: 1114, name: 'timestamp'))
-      map.add_coder(::PG::TextDecoder::String.new(oid: 2950, name: 'uuid'))
-      map.add_coder(::PG::TextDecoder::JSON.new(oid: 3802, name: 'jsonb'))
       @connection = ::PG.connect(@pg_config)
-      @connection.type_map_for_results = map
+      @connection.type_map_for_results = @map
       @connection.exec('LISTEN "skiplock::jobs"').clear
+      @connection.exec('LISTEN "skiplock::workers"').clear
     end
 
     def run
@@ -85,18 +89,25 @@ module Skiplock
                 next_schedule_at = (result ? result['scheduled_at'].to_f : Float::INFINITY)
               end
             end
-            job_notifications = []
+            notifications = { 'skiplock::jobs' => [], 'skiplock::workers' => [] }
             @connection.wait_for_notify(0.2) do |channel, pid, payload|
-              job_notifications << payload if payload
+              notifications[channel] << payload if payload
               loop do
                 payload = @connection.notifies
                 break unless @running && payload
-                job_notifications << payload[:extra]
+                notifications[payload[:relname]] << payload[:extra]
               end
-              job_notifications.each do |n|
+              notifications['skiplock::jobs'].each do |n|
                 op, id, worker_id, job_class, queue_name, running, expired_at, finished_at, scheduled_at = n.split(',')
+                ActionCable.server.broadcast('skiplock', { job: { op: op, id: id, worker_id: worker_id, job_class: job_class, queue_name: queue_name, running: (running == 'true'), expired_at: expired_at.to_f, finished_at: finished_at.to_f, scheduled_at: scheduled_at.to_f } }) if self.master && @config[:actioncable]
                 next if op == 'DELETE' || running == 'true' || expired_at.to_f > 0 || finished_at.to_f > 0
                 next_schedule_at = scheduled_at.to_f if scheduled_at.to_f < next_schedule_at
+              end
+              if self.master && @config[:actioncable]
+                notifications['skiplock::workers'].each do |w|
+                  op, id, hostname, master, capacity, pid, sid, created_at, updated_at = w.split(',')
+                  ActionCable.server.broadcast('skiplock', { worker: { op: op, id: id, hostname: hostname, master: (master == 'true'), capacity: capacity.to_i, pid: pid.to_i, sid: sid.to_i, created_at: created_at.to_f, updated_at: updated_at.to_f } })
+                end
               end
             end
             if Process.clock_gettime(Process::CLOCK_MONOTONIC) - timestamp > 60
