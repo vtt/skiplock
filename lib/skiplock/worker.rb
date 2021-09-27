@@ -17,14 +17,14 @@ module Skiplock
     rescue
       worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)
     ensure
-      ActionCable.server.broadcast('skiplock', { worker: { op: 'CREATE', id: worker.id, hostname: worker.hostname, master: worker.master, capacity: worker.capacity, pid: worker.pid, sid: worker.sid, created_at: worker.created_at.to_f, updated_at: worker.updated_at.to_f } }) if actioncable
+      ActionCable.server.broadcast('skiplock', { worker: { op: 'CREATE', id: worker.id, hostname: worker.hostname, master: worker.master, capacity: worker.capacity, pid: worker.pid, sid: worker.sid, created_at: worker.created_at.to_f, updated_at: worker.updated_at.to_f } }) if actioncable && defined?(ActionCable)
     end
 
     def shutdown
       @running = false
       @executor.shutdown
       @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
-      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if @config[:actioncable]
+      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if @config[:actioncable] && defined?(ActionCable)
       self.delete
       Skiplock.logger.info "[Skiplock] Shutdown of #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} (PID: #{self.pid}) was completed."
     end
@@ -99,11 +99,11 @@ module Skiplock
               end
               notifications['skiplock::jobs'].each do |n|
                 op, id, worker_id, job_class, queue_name, running, expired_at, finished_at, scheduled_at = n.split(',')
-                ActionCable.server.broadcast('skiplock', { job: { op: op, id: id, worker_id: worker_id, job_class: job_class, queue_name: queue_name, running: (running == 'true'), expired_at: expired_at.to_f, finished_at: finished_at.to_f, scheduled_at: scheduled_at.to_f } }) if self.master && @config[:actioncable]
+                ActionCable.server.broadcast('skiplock', { job: { op: op, id: id, worker_id: worker_id, job_class: job_class, queue_name: queue_name, running: (running == 'true'), expired_at: expired_at.to_f, finished_at: finished_at.to_f, scheduled_at: scheduled_at.to_f } }) if self.master && @config[:actioncable] && defined?(ActionCable)
                 next if op == 'DELETE' || running == 'true' || expired_at.to_f > 0 || finished_at.to_f > 0
                 next_schedule_at = scheduled_at.to_f if scheduled_at.to_f < next_schedule_at
               end
-              if self.master && @config[:actioncable]
+              if self.master && @config[:actioncable] && defined?(ActionCable)
                 notifications['skiplock::workers'].each do |w|
                   op, id, hostname, master, capacity, pid, sid, created_at, updated_at = w.split(',')
                   ActionCable.server.broadcast('skiplock', { worker: { op: op, id: id, hostname: hostname, master: (master == 'true'), capacity: capacity.to_i, pid: pid.to_i, sid: sid.to_i, created_at: created_at.to_f, updated_at: updated_at.to_f } })

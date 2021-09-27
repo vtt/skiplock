@@ -50,12 +50,14 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```yaml
     # config/skiplock.yml (default settings)
     ---
+    graceful_shutdown: 15
     min_threads: 1
     max_threads: 10
     max_retries: 20
     logfile: skiplock.log
     loglevel: info
     notification: custom
+    actioncable: false
     extensions: false
     purge_completion: true
     queues:
@@ -64,12 +66,14 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     workers: 0
     ```
     Available configuration options are:
+    - **graceful_shutdown** (*integer*): sets the number of seconds to wait for jobs to finish before being killed during shutdown
     - **min_threads** (*integer*): sets minimum number of threads staying idle
     - **max_threads** (*integer*): sets the maximum number of threads allowed to run jobs
     - **max_retries** (*integer*): sets the maximum attempt a job will be retrying before it is marked expired.  See `Retry system` for more details
     - **logfile** (*string*): filename for skiplock logs; empty logfile will disable logging
     - **loglevel** (*string*): sets logging level (`debug, info, warn, error, fatal, unknown`)
     - **notification** (*string*): sets the library to be used for notifying errors and exceptions (`auto, airbrake, bugsnag, exception_notification, custom`); using `auto` will detect library if available.  See `Notification system` for more details
+    - **actioncable** (*boolean*): enable or disable usage of ActionCable notification
     - **extensions** (*multi*): enable or disable the class method extension.  See `ClassMethod extension` for more details
     - **purge_completion** (*boolean*): when set to **true** will delete jobs after they were completed successfully; if set to **false** then the completed jobs should be purged periodically to maximize performance (eg. clean up old jobs after 3 months); queued jobs can manually override using `purge` option
     - **queues** (*hash*): defines the set of queues with priorities; lower priority takes precedence
@@ -83,6 +87,7 @@ The library is quite small compared to other PostgreSQL job queues (eg. *delay_j
     ```
     $ bundle exec skiplock -h
     Usage: skiplock [options]
+      -a, --actioncable YESNO          Actioncable notification
       -e, --environment STRING         Rails environment
       -l, --logfile STRING             Log filename
       -L, --loglevel STRING            Log level (debug, info, warn, error, fatal, unknown)

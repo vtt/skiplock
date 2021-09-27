@@ -11,7 +11,6 @@ module Skiplock
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
       ActiveJob::Base.__send__(:include, Skiplock::Patch)
-      raise 'ActionCable is not found' if @config[:actioncable] && !defined?(ActionCable)
       (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
     end
 
@@ -77,18 +76,19 @@ module Skiplock
       @logger.info "-"*(title.length)
       @logger.info title
       @logger.info "-"*(title.length)
-      @logger.info "ClassMethod extensions: #{@config[:extensions]}"
-      @logger.info "      Purge completion: #{@config[:purge_completion]}"
-      @logger.info "          Notification: #{@config[:notification]}"
-      @logger.info "           Max retries: #{@config[:max_retries]}"
-      @logger.info "           Min threads: #{@config[:min_threads]}"
-      @logger.info "           Max threads: #{@config[:max_threads]}"
-      @logger.info "           Environment: #{Rails.env}"
-      @logger.info "              Loglevel: #{@config[:loglevel]}"
-      @logger.info "               Logfile: #{@config[:logfile] || '(disabled)'}"
-      @logger.info "               Workers: #{@config[:workers]}"
-      @logger.info "                Queues: #{@config[:queues].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}" if @config[:queues].is_a?(Hash)
-      @logger.info "                   PID: #{Process.pid}"
+      @logger.info "ActionCable notification: #{@config[:actioncable]}#{' (not available)' unless defined?(ActionCable)}"
+      @logger.info "  ClassMethod extensions: #{@config[:extensions]}"
+      @logger.info "        Purge completion: #{@config[:purge_completion]}"
+      @logger.info "            Notification: #{@config[:notification]}"
+      @logger.info "             Max retries: #{@config[:max_retries]}"
+      @logger.info "             Min threads: #{@config[:min_threads]}"
+      @logger.info "             Max threads: #{@config[:max_threads]}"
+      @logger.info "             Environment: #{Rails.env}"
+      @logger.info "                Loglevel: #{@config[:loglevel]}"
+      @logger.info "                 Logfile: #{@config[:logfile] || '(disabled)'}"
+      @logger.info "                 Workers: #{@config[:workers]}"
+      @logger.info "                  Queues: #{@config[:queues].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}" if @config[:queues].is_a?(Hash)
+      @logger.info "                     PID: #{Process.pid}"
       @logger.info "-"*(title.length)
       @logger.warn "[Skiplock] Custom notification has no registered 'on_error' callback" if Skiplock.on_errors.count == 0
     end
@@ -135,6 +135,7 @@ module Skiplock
       else
         @config[:notification] = 'custom'
       end
+      @logger.error 'ActionCable is not found!' if @config[:actioncable] && !defined?(ActionCable)
       Skiplock.on_errors.freeze
     end
 
