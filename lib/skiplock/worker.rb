@@ -12,7 +12,7 @@ module Skiplock
       self.where(id: delete_ids).delete_all if delete_ids.count > 0
     end
 
-    def self.generate(capacity:, hostname:, master: true, actioncable: true)
+    def self.generate(capacity:, hostname:, master: true, actioncable: false)
       worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity)
     rescue
       worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)

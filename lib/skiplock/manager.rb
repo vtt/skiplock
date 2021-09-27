@@ -11,6 +11,7 @@ module Skiplock
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
       ActiveJob::Base.__send__(:include, Skiplock::Patch)
+      raise 'ActionCable is not found' if @config[:actioncable] && !defined?(ActionCable)
       (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
     end
 
