@@ -4,7 +4,7 @@
 
 It only uses the `LISTEN/NOTIFY/SKIP LOCKED` features provided natively on PostgreSQL 9.5+ to efficiently and reliably dispatch jobs to worker processes and threads ensuring that each job can be completed successfully **only once**.  No other polling or timer is needed.
 
-The library is quite small compared to other PostgreSQL job queues (eg. *delay_job*, *queue_classic*, *que*, *good_job*) with less than 500 lines of codes; and it still provides similar set of features and more...
+The library is quite small compared to other PostgreSQL job queues (eg. *delay_job*, *queue_classic*, *que*, *good_job*) with less than 600 lines of codes; and it still provides similar set of features and more...
 
 #### Compatibility:
 

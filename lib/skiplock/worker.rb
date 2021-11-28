@@ -24,8 +24,7 @@ module Skiplock
       @running = false
       @executor.shutdown
       @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
-      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if @config[:actioncable] && defined?(ActionCable)
-      self.delete
+      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if self.delete && @config[:actioncable] && defined?(ActionCable)
       Skiplock.logger.info "[Skiplock] Shutdown of #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} (PID: #{self.pid}) was completed."
     end
 

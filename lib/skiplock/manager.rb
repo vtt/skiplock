@@ -152,6 +152,8 @@ module Skiplock
         Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
         Rails.logger.level = @logger.level
         Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
+        # disable ActionCable logging
+        ActionCable.server.config.logger = Logger.new(nil)
       end
     rescue Exception => ex
       @logger.error "Exception with logger: #{ex.to_s}"
