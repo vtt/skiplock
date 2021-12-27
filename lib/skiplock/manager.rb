@@ -18,7 +18,7 @@ module Skiplock
       setup_logger
       configure
       Worker.cleanup(@hostname)
-      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, actioncable: @config[:actioncable])
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
       Cron.setup if @worker.master
       @worker.start(**@config)
       at_exit { @worker.shutdown }
@@ -40,13 +40,13 @@ module Skiplock
       Signal.trap('TERM') { @shutdown = true }
       Signal.trap('HUP') { setup_logger }
       Worker.cleanup(@hostname)
-      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, actioncable: @config[:actioncable])
+      @worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname)
       ActiveRecord::Base.connection.disconnect! if @config[:workers] > 1
       (@config[:workers] - 1).times do |n|
         fork do
           sleep(0.25*n + 1)
           ActiveRecord::Base.establish_connection
-          worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false, actioncable: @config[:actioncable])
+          worker = Worker.generate(capacity: @config[:max_threads], hostname: @hostname, master: false)
           worker.start(worker_num: n + 1, **@config)
           loop do
             sleep 0.5
@@ -76,7 +76,6 @@ module Skiplock
       @logger.info "-"*(title.length)
       @logger.info title
       @logger.info "-"*(title.length)
-      @logger.info "ActionCable notification: #{@config[:actioncable]}#{' (not available)' unless defined?(ActionCable)}"
       @logger.info "  ClassMethod extensions: #{@config[:extensions]}"
       @logger.info "        Purge completion: #{@config[:purge_completion]}"
       @logger.info "            Notification: #{@config[:notification]}"
@@ -84,6 +83,7 @@ module Skiplock
       @logger.info "             Min threads: #{@config[:min_threads]}"
       @logger.info "             Max threads: #{@config[:max_threads]}"
       @logger.info "             Environment: #{Rails.env}"
+      @logger.info "               Namespace: #{@config[:namespace] || '(nil)'}"
       @logger.info "                Loglevel: #{@config[:loglevel]}"
       @logger.info "                 Logfile: #{@config[:logfile] || '(disabled)'}"
       @logger.info "                 Workers: #{@config[:workers]}"
@@ -135,7 +135,7 @@ module Skiplock
       else
         @config[:notification] = 'custom'
       end
-      @logger.error 'ActionCable is not found!' if @config[:actioncable] && !defined?(ActionCable)
+      Skiplock.namespace = @config[:namespace]
       Skiplock.on_errors.freeze
     end
 
@@ -152,8 +152,6 @@ module Skiplock
         Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
         Rails.logger.level = @logger.level
         Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
-        # disable ActionCable logging
-        ActionCable.server.config.logger = Logger.new(nil)
       end
     rescue Exception => ex
       @logger.error "Exception with logger: #{ex.to_s}"

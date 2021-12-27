@@ -8,9 +8,10 @@ module Skiplock
     belongs_to :worker, inverse_of: :jobs, required: false
 
     def self.dispatch(purge_completion: true, max_retries: 20)
+      namespace_query = Skiplock.namespace.nil? ? "namespace IS NULL" : "namespace = '#{Skiplock.namespace}'"
       job = nil
       self.connection.transaction do
-        job = self.find_by_sql("SELECT id, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
+        job = self.find_by_sql("SELECT id, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL AND #{namespace_query} ORDER BY scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1").first
         return if job.nil? || job.scheduled_at.to_f > Time.now.to_f
         job = self.find_by_sql("UPDATE skiplock.jobs SET running = TRUE, updated_at = NOW() WHERE id = '#{job.id}' RETURNING *").first
       end
@@ -33,7 +34,7 @@ module Skiplock
         Thread.current[:skiplock_job]
       else
         serialize = activejob.serialize
-        self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'], 'options' => options }, 'scheduled_at' => timestamp))
+        self.create!(serialize.slice(*self.column_names).merge('id' => serialize['job_id'], 'data' => { 'arguments' => serialize['arguments'], 'options' => options }, 'namespace' => Skiplock.namespace, 'scheduled_at' => timestamp))
       end
     end
 

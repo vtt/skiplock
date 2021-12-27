@@ -12,6 +12,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
     create_table 'skiplock.jobs', id: :uuid do |t|
       t.uuid      :worker_id, index: true
       t.string    :job_class, null: false
+      t.string    :namespace, index: true
       t.string    :queue_name, index: true
       t.string    :locale
       t.string    :timezone

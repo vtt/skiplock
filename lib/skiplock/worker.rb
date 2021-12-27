@@ -12,19 +12,16 @@ module Skiplock
       self.where(id: delete_ids).delete_all if delete_ids.count > 0
     end
 
-    def self.generate(capacity:, hostname:, master: true, actioncable: false)
+    def self.generate(capacity:, hostname:, master: true)
       worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity)
     rescue
       worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)
-    ensure
-      ActionCable.server.broadcast('skiplock', { worker: { op: 'CREATE', id: worker.id, hostname: worker.hostname, master: worker.master, capacity: worker.capacity, pid: worker.pid, sid: worker.sid, created_at: worker.created_at.to_f, updated_at: worker.updated_at.to_f } }) if actioncable && defined?(ActionCable)
     end
 
     def shutdown
       @running = false
       @executor.shutdown
       @executor.kill unless @executor.wait_for_termination(@config[:graceful_shutdown])
-      ActionCable.server.broadcast('skiplock', { worker: { op: 'DELETE', id: self.id, hostname: self.hostname, master: self.master, capacity: self.capacity, pid: self.pid, sid: self.sid, created_at: self.created_at.to_f, updated_at: self.updated_at.to_f } }) if self.delete && @config[:actioncable] && defined?(ActionCable)
       Skiplock.logger.info "[Skiplock] Shutdown of #{self.master ? 'master' : 'cluster'} worker#{(' ' + @num.to_s) if @num > 0 && @config[:workers] > 2} (PID: #{self.pid}) was completed."
     end
 
@@ -32,6 +29,7 @@ module Skiplock
       @num = worker_num
       @config = config
       @pg_config = ActiveRecord::Base.connection.raw_connection.conninfo_hash.compact
+      @namespace_query = Skiplock.namespace.nil? ? "namespace IS NULL" : "namespace = '#{Skiplock.namespace}'"
       @queues_order_query = @config[:queues].map { |q,v| "WHEN queue_name = '#{q}' THEN #{v}" }.join(' ') if @config[:queues].is_a?(Hash) && @config[:queues].count > 0
       @running = true
       @map = ::PG::TypeMapByOid.new
@@ -77,7 +75,7 @@ module Skiplock
             if Time.now.to_f >= next_schedule_at && @executor.remaining_capacity > 1  # reserves 1 slot in queue for Job.flush in case of pg_connection error
               result = nil
               @connection.transaction do |conn|
-                conn.exec("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1") do |r|
+                conn.exec("SELECT id, running, scheduled_at FROM skiplock.jobs WHERE running = FALSE AND expired_at IS NULL AND finished_at IS NULL AND #{@namespace_query} ORDER BY scheduled_at ASC NULLS FIRST,#{@queues_order_query ? ' CASE ' + @queues_order_query + ' ELSE NULL END ASC NULLS LAST,' : ''} priority ASC NULLS LAST, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1") do |r|
                   result = r.first
                   conn.exec("UPDATE skiplock.jobs SET running = TRUE, worker_id = '#{self.id}', updated_at = NOW() WHERE id = '#{result['id']}' RETURNING *") { |r| result = r.first } if result && result['scheduled_at'].to_f <= Time.now.to_f
                 end
@@ -98,15 +96,8 @@ module Skiplock
               end
               notifications['skiplock::jobs'].each do |n|
                 op, id, worker_id, job_class, queue_name, running, expired_at, finished_at, scheduled_at = n.split(',')
-                ActionCable.server.broadcast('skiplock', { job: { op: op, id: id, worker_id: worker_id, job_class: job_class, queue_name: queue_name, running: (running == 'true'), expired_at: expired_at.to_f, finished_at: finished_at.to_f, scheduled_at: scheduled_at.to_f } }) if self.master && @config[:actioncable] && defined?(ActionCable)
                 next if op == 'DELETE' || running == 'true' || expired_at.to_f > 0 || finished_at.to_f > 0
                 next_schedule_at = scheduled_at.to_f if scheduled_at.to_f < next_schedule_at
-              end
-              if self.master && @config[:actioncable] && defined?(ActionCable)
-                notifications['skiplock::workers'].each do |w|
-                  op, id, hostname, master, capacity, pid, sid, created_at, updated_at = w.split(',')
-                  ActionCable.server.broadcast('skiplock', { worker: { op: op, id: id, hostname: hostname, master: (master == 'true'), capacity: capacity.to_i, pid: pid.to_i, sid: sid.to_i, created_at: created_at.to_f, updated_at: updated_at.to_f } })
-                end
               end
             end
             if Process.clock_gettime(Process::CLOCK_MONOTONIC) - timestamp > 60
