@@ -26,7 +26,7 @@ module Skiplock
   end
 
   def self.namespace
-    @namespace
+    @namespace || ''
   end
 
   def self.on_error(&block)

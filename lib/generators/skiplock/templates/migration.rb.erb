@@ -7,12 +7,14 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
       t.integer   :expiries, null: false, default: 0
       t.integer   :failures, null: false, default: 0
       t.integer   :retries, null: false, default: 0
-      t.date      :day, null: false, index: { unique: true }
+      t.string    :namespace, null: false, default: '', index: true
+      t.date      :day, null: false
+      t.index     [ :namespace, :day ], unique: true
     end
     create_table 'skiplock.jobs', id: :uuid do |t|
       t.uuid      :worker_id, index: true
       t.string    :job_class, null: false
-      t.string    :namespace, index: true
+      t.string    :namespace, null: false, default: '', index: true
       t.string    :queue_name, index: true
       t.string    :locale
       t.string    :timezone
@@ -32,6 +34,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
       t.integer   :sid, null: false
       t.integer   :capacity, null: false
       t.string    :hostname, null: false, index: true
+      t.string    :namespace, null: false, default: '', index: true
       t.boolean   :master, null: false, default: false, index: true
       t.jsonb     :data
       t.timestamps null: false, index: true, default: -> { 'now()' }
@@ -42,27 +45,29 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
           record RECORD;
         BEGIN
           record = NEW;
-          IF (TG_OP = 'DELETE') THEN
+          IF TG_OP = 'DELETE' THEN
             record = OLD;
-            IF (record.running = TRUE) THEN
-              INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
+            IF record.running IS TRUE THEN
+              INSERT INTO skiplock.counters (namespace,day,completions) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET completions = skiplock.counters.completions + 1;
             END IF;
-          ELSIF (TG_OP = 'UPDATE') THEN
-            IF (OLD.running = FALSE AND record.running = TRUE) THEN
-              IF (record.executions > 0) THEN
-                INSERT INTO skiplock.counters (day,retries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET retries = skiplock.counters.retries + 1;
+          ELSIF TG_OP = 'UPDATE' THEN
+            IF OLD.running IS FALSE AND record.running IS TRUE THEN
+              IF record.executions > 0 THEN
+                INSERT INTO skiplock.counters (namespace,day,retries) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET retries = skiplock.counters.retries + 1;
               ELSE
-                INSERT INTO skiplock.counters (day,dispatches) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET dispatches = skiplock.counters.dispatches + 1;
+                INSERT INTO skiplock.counters (namespace,day,dispatches) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET dispatches = skiplock.counters.dispatches + 1;
               END IF;
-            ELSIF (OLD.finished_at IS NULL AND record.finished_at IS NOT NULL) THEN
-              INSERT INTO skiplock.counters (day,completions) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET completions = skiplock.counters.completions + 1;
-            ELSIF (OLD.running = TRUE AND record.running = FALSE AND record.expired_at IS NOT NULL) THEN
-              INSERT INTO skiplock.counters (day,expiries) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
-            ELSIF (OLD.running = TRUE AND record.running = FALSE AND record.expired_at IS NULL AND record.finished_at IS NULL) THEN
-              INSERT INTO skiplock.counters (day,failures) VALUES (NOW(),1) ON CONFLICT (day) DO UPDATE SET failures = skiplock.counters.failures + 1;
+            ELSIF OLD.finished_at IS NULL AND record.finished_at IS NOT NULL THEN
+              INSERT INTO skiplock.counters (namespace,day,completions) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET completions = skiplock.counters.completions + 1;
+            ELSIF OLD.running IS TRUE AND record.running IS FALSE THEN
+              IF record.expired_at IS NOT NULL THEN
+                INSERT INTO skiplock.counters (namespace,day,expiries) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET expiries = skiplock.counters.expiries + 1;
+              ELSE
+                INSERT INTO skiplock.counters (namespace,day,failures) VALUES (record.namespace,NOW(),1) ON CONFLICT (namespace,day) DO UPDATE SET failures = skiplock.counters.failures + 1;
+              END IF;
             END IF;
           END IF;
-          PERFORM pg_notify('skiplock::jobs', CONCAT(TG_OP,',',record.id::TEXT,',',record.worker_id::TEXT,',',record.job_class,',',record.queue_name,',',record.running::TEXT,',',CAST(EXTRACT(EPOCH FROM record.expired_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.finished_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM CASE WHEN record.scheduled_at IS NULL THEN record.updated_at ELSE record.scheduled_at END) AS FLOAT)::TEXT));
+          PERFORM pg_notify('skiplock::jobs', CONCAT(TG_OP,',',record.id::TEXT,',',record.worker_id::TEXT,',',record.namespace,',',record.job_class,',',record.queue_name,',',record.running::TEXT,',',CAST(EXTRACT(EPOCH FROM record.expired_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.finished_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM CASE WHEN record.scheduled_at IS NULL THEN record.updated_at ELSE record.scheduled_at END) AS FLOAT)::TEXT));
           RETURN NULL;
         END;
       $$ LANGUAGE plpgsql
@@ -72,12 +77,12 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
         DECLARE
           record RECORD;
         BEGIN
-          IF (TG_OP = 'DELETE') THEN
+          IF TG_OP = 'DELETE' THEN
             record = OLD;
           ELSE
             record = NEW;
           END IF;
-          PERFORM pg_notify('skiplock::workers', CONCAT(TG_OP,',',record.id::TEXT,',',record.hostname,',',record.master::TEXT,',',record.capacity,',',record.pid,',',record.sid,',',CAST(EXTRACT(EPOCH FROM record.created_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.updated_at) AS FLOAT)::TEXT));
+          PERFORM pg_notify('skiplock::workers', CONCAT(TG_OP,',',record.id::TEXT,',',record.namespace,',',record.hostname,',',record.master::TEXT,',',record.capacity,',',record.pid,',',record.sid,',',CAST(EXTRACT(EPOCH FROM record.created_at) AS FLOAT)::TEXT,',',CAST(EXTRACT(EPOCH FROM record.updated_at) AS FLOAT)::TEXT));
           RETURN NULL;
         END;
       $$ LANGUAGE plpgsql;
@@ -88,7 +93,7 @@ class CreateSkiplockSchema < ActiveRecord::Migration<%= "[#{ActiveRecord::VERSIO
     execute "CREATE INDEX jobs_retry_index ON skiplock.jobs(scheduled_at) WHERE running = FALSE AND executions IS NOT NULL AND expired_at IS NULL AND finished_at IS NULL"
     execute "CREATE INDEX jobs_cron_index ON skiplock.jobs(scheduled_at ASC NULLS FIRST, priority ASC NULLS LAST, created_at ASC) WHERE cron IS NOT NULL AND finished_at IS NULL"
     execute "CREATE UNIQUE INDEX jobs_unique_cron_index ON skiplock.jobs (job_class) WHERE cron IS NOT NULL"
-    execute "CREATE UNIQUE INDEX workers_unique_master_index ON skiplock.workers(hostname) WHERE master = TRUE"
+    execute "CREATE UNIQUE INDEX workers_unique_master_index ON skiplock.workers(hostname,namespace) WHERE master = TRUE"
   end
 
   def down

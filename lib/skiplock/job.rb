@@ -3,8 +3,8 @@ module Skiplock
     self.implicit_order_column = 'updated_at'
     attribute :activejob_error
     attribute :exception
-    attribute :max_retries, :integer
-    attribute :purge, :boolean
+    attribute :max_retries
+    attribute :purge
     belongs_to :worker, inverse_of: :jobs, required: false
 
     def self.dispatch(purge_completion: true, max_retries: 20)

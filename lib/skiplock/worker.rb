@@ -5,7 +5,7 @@ module Skiplock
 
     def self.cleanup(hostname = nil)
       delete_ids = []
-      self.where(hostname: hostname || Socket.gethostname).each do |worker|
+      self.where(namespace: Skiplock.namespace, hostname: hostname || Socket.gethostname).each do |worker|
         sid = Process.getsid(worker.pid) rescue nil
         delete_ids << worker.id if worker.sid != sid || worker.updated_at < 10.minutes.ago
       end
@@ -13,9 +13,9 @@ module Skiplock
     end
 
     def self.generate(capacity:, hostname:, master: true)
-      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity)
+      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: master, hostname: hostname, capacity: capacity, namespace: Skiplock.namespace)
     rescue
-      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity)
+      worker = self.create!(pid: Process.pid, sid: Process.getsid(), master: false, hostname: hostname, capacity: capacity, namespace: Skiplock.namespace)
     end
 
     def shutdown
@@ -95,8 +95,8 @@ module Skiplock
                 notifications[payload[:relname]] << payload[:extra]
               end
               notifications['skiplock::jobs'].each do |n|
-                op, id, worker_id, job_class, queue_name, running, expired_at, finished_at, scheduled_at = n.split(',')
-                next if op == 'DELETE' || running == 'true' || expired_at.to_f > 0 || finished_at.to_f > 0
+                op, id, worker_id, namespace, job_class, queue_name, running, expired_at, finished_at, scheduled_at = n.split(',')
+                next if op == 'DELETE' || running == 'true' || namespace != Skiplock.namespace || expired_at.to_f > 0 || finished_at.to_f > 0
                 next_schedule_at = scheduled_at.to_f if scheduled_at.to_f < next_schedule_at
               end
             end
