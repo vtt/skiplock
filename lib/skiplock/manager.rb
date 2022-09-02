@@ -11,6 +11,7 @@ module Skiplock
         @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
       end
       ActiveJob::Base.__send__(:include, Skiplock::Patch)
+      Skiplock.namespace = @config[:namespace]
       (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
     end
 
@@ -135,7 +136,6 @@ module Skiplock
       else
         @config[:notification] = 'custom'
       end
-      Skiplock.namespace = @config[:namespace]
       Skiplock.on_errors.freeze
     end
 
