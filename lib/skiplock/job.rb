@@ -27,9 +27,9 @@ module Skiplock
       timestamp = Time.at(timestamp) if timestamp
       if Thread.current[:skiplock_job].try(:id) == activejob.job_id
         Thread.current[:skiplock_job].activejob_error = options[:error]
-        Thread.current[:skiplock_job].data['activejob_error'] = true
         Thread.current[:skiplock_job].executions = activejob.executions
         Thread.current[:skiplock_job].exception_executions = activejob.exception_executions
+        Thread.current[:skiplock_job].exception_executions['activejob_error'] = true
         Thread.current[:skiplock_job].scheduled_at = timestamp
         Thread.current[:skiplock_job]
       else
@@ -65,8 +65,8 @@ module Skiplock
       self.worker_id = nil
       self.updated_at = Time.now > self.updated_at ? Time.now : self.updated_at + 1 # in case of clock drifting
       if self.exception
-        self.exception_executions["[#{self.exception.class.name}]"] = self.exception_executions["[#{self.exception.class.name}]"].to_i + 1 unless self.data.key?('activejob_error')
-        if (self.executions.to_i >= self.max_retries + 1) || self.data.key?('activejob_error') || self.exception.is_a?(Skiplock::Extension::ProxyError)
+        self.exception_executions["[#{self.exception.class.name}]"] = self.exception_executions["[#{self.exception.class.name}]"].to_i + 1 unless self.exception_executions.key?('activejob_error')
+        if (self.executions.to_i >= self.max_retries + 1) || self.exception_executions.key?('activejob_error') || self.exception.is_a?(Skiplock::Extension::ProxyError)
           self.expired_at = Time.now
         else
           self.scheduled_at = Time.now + (5 * 2**self.executions.to_i)
