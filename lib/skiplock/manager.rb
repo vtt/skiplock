@@ -141,11 +141,11 @@ module Skiplock
 
     def setup_logger
       @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
-      @logger = ActiveSupport::Logger.new(STDOUT)
+      @logger = ActiveSupport::BroadcastLogger.new(::Logger.new(STDOUT))
       @logger.level = @config[:loglevel].to_sym
       Skiplock.logger = @logger
       if @config[:logfile].to_s.length > 0
-        @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
+        @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily'))
         ActiveJob::Base.logger = nil
       end
       if @config[:standalone]

@@ -116,8 +116,9 @@ module Skiplock
       self.max_retries = (self.data['options'].key?('max_retries') ? self.data['options']['max_retries'].to_i : max_retries) rescue max_retries
       self.max_retries = 20 if self.max_retries < 0 || self.max_retries > 20
       self.purge = (self.data['options'].key?('purge') ? self.data['options']['purge'] : purge_completion) rescue purge_completion
-      job_data = { 'job_class' => self.job_class, 'queue_name' => self.queue_name, 'locale' => self.locale, 'timezone' => self.timezone, 'priority' => self.priority, 'executions' => self.executions, 'exception_executions' => self.exception_executions.dup, 'job_id' => self.id, 'enqueued_at' => self.updated_at, 'arguments' => (self.data['arguments'] || []) }
+      job_data = { 'job_class' => self.job_class, 'queue_name' => self.queue_name, 'locale' => self.locale, 'timezone' => self.timezone, 'priority' => self.priority, 'executions' => self.executions, 'exception_executions' => self.exception_executions.dup, 'job_id' => self.id, 'enqueued_at' => self.updated_at.iso8601, 'arguments' => (self.data['arguments'] || []) }
       self.executions = self.executions.to_i + 1
+      self.data_will_change!
       Thread.current[:skiplock_job] = self
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       begin
