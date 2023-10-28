@@ -44,7 +44,7 @@ module Skiplock
       Dir.glob('tmp/skiplock/*').each do |f|
         disposed = true
         if self.exists?(id: File.basename(f), running: true)
-          job = YAML.load_file(f) rescue nil
+          job = YAML.respond_to?(:unsafe_load_file) ? YAML.unsafe_load_file(f) : YAML.load_file(f)
           disposed = job.dispose if job.is_a?(Skiplock::Job)
         end
         (File.delete(f) rescue nil) if disposed
