@@ -141,17 +141,29 @@ module Skiplock
 
     def setup_logger
       @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
-      @logger = ActiveSupport::BroadcastLogger.new(::Logger.new(STDOUT))
+      if defined?(ActiveSupport::BroadcastLogger)
+        @logger = ActiveSupport::BroadcastLogger.new(::Logger.new(STDOUT))
+      else
+        @logger = ActiveSupport::Logger.new(STDOUT)
+      end
       @logger.level = @config[:loglevel].to_sym
       Skiplock.logger = @logger
       if @config[:logfile].to_s.length > 0
-        @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily'))
+        if defined?(ActiveSupport::BroadcastLogger)
+          @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily'))
+        else
+          @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
+        end
         ActiveJob::Base.logger = nil
       end
       if @config[:standalone]
-        Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
-        Rails.logger.level = @logger.level
-        Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
+        if defined?(ActiveSupport::BroadcastLogger)
+          Rails.logger = @logger
+        else
+          Rails.logger.reopen('/dev/null') rescue Rails.logger.reopen('NUL') # supports Windows NUL device
+          Rails.logger.level = @logger.level
+          Rails.logger.extend(ActiveSupport::Logger.broadcast(@logger))
+        end
       end
     rescue Exception => ex
       @logger.error "Exception with logger: #{ex.to_s}"
