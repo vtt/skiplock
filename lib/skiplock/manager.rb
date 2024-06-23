@@ -154,9 +154,9 @@ module Skiplock
       Skiplock.logger = @logger
       if @config[:log_file].to_s.length > 0
         if defined?(ActiveSupport::BroadcastLogger)
-          @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count], @config[:log_size]))
+          @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count] || 5, @config[:log_size] || 10485760))
         else
-          @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count], @config[:log_size])))
+          @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count] || 5, @config[:log_size] || 10485760)))
         end
         ActiveJob::Base.logger = nil
       end
