@@ -85,8 +85,12 @@ module Skiplock
       @logger.info "             Max threads: #{@config[:max_threads]}"
       @logger.info "             Environment: #{Rails.env}"
       @logger.info "               Namespace: #{@config[:namespace] || '(nil)'}"
-      @logger.info "                Loglevel: #{@config[:loglevel]}"
-      @logger.info "                 Logfile: #{@config[:logfile] || '(disabled)'}"
+      @logger.info "               Log level: #{@config[:log_level]}"
+      if @config[:log_file]
+        @logger.info "               Log count: #{@config[:log_count]}"
+        @logger.info "                Log size: #{@config[:log_size]}"
+      end
+      @logger.info "                Log file: #{@config[:log_file] || '(disabled)'}"
       @logger.info "                 Workers: #{@config[:workers]}"
       @logger.info "                  Queues: #{@config[:queues].map {|k,v| k + '(' + v.to_s + ')'}.join(', ')}" if @config[:queues].is_a?(Hash)
       @logger.info "                     PID: #{Process.pid}"
@@ -140,19 +144,19 @@ module Skiplock
     end
 
     def setup_logger
-      @config[:loglevel] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:loglevel].to_s)
+      @config[:log_level] = 'info' unless ['debug','info','warn','error','fatal','unknown'].include?(@config[:log_level].to_s)
       if defined?(ActiveSupport::BroadcastLogger)
         @logger = ActiveSupport::BroadcastLogger.new(::Logger.new(STDOUT))
       else
         @logger = ActiveSupport::Logger.new(STDOUT)
       end
-      @logger.level = @config[:loglevel].to_sym
+      @logger.level = @config[:log_level].to_sym
       Skiplock.logger = @logger
-      if @config[:logfile].to_s.length > 0
+      if @config[:log_file].to_s.length > 0
         if defined?(ActiveSupport::BroadcastLogger)
-          @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily'))
+          @logger.broadcast_to(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count], @config[:log_size]))
         else
-          @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:logfile].to_s), 'daily')))
+          @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count], @config[:log_size])))
         end
         ActiveJob::Base.logger = nil
       end
