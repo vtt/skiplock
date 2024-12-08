@@ -4,15 +4,7 @@ module Skiplock
       @config = Skiplock::DEFAULT_CONFIG.dup
       @config.merge!(YAML.load_file('config/skiplock.yml')) rescue nil
       @config.symbolize_keys!
-      Rails.application.eager_load! if Rails.env.development?
-      if @config[:extensions] == true
-        Module.__send__(:include, Skiplock::Extension)
-      elsif @config[:extensions].is_a?(Array)
-        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
-      end
-      ActiveJob::Base.__send__(:include, Skiplock::Patch)
-      Skiplock.namespace = @config[:namespace]
-      (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0) ? async : Cron.setup
+      async if (caller.any?{ |l| l =~ %r{/rack/} } && @config[:workers] == 0)
     end
 
     def async
@@ -99,6 +91,13 @@ module Skiplock
     end
 
     def configure
+      if @config[:extensions] == true
+        Module.__send__(:include, Skiplock::Extension)
+      elsif @config[:extensions].is_a?(Array)
+        @config[:extensions].each { |n| n.constantize.__send__(:extend, Skiplock::Extension) if n.safe_constantize }
+      end
+      ActiveJob::Base.__send__(:include, Skiplock::Patch)
+      Skiplock.namespace = @config[:namespace]
       @hostname = "#{`hostname -f`.strip}|#{Socket.ip_address_list.reject(&:ipv4_loopback?).reject(&:ipv6?).map(&:ip_address).join('|')}"
       @config.transform_values! {|v| v.is_a?(String) ? v.downcase : v}
       @config[:graceful_shutdown] = 300 if @config[:graceful_shutdown] > 300
@@ -158,7 +157,7 @@ module Skiplock
         else
           @logger.extend(ActiveSupport::Logger.broadcast(::Logger.new(File.join(Rails.root, 'log', @config[:log_file].to_s), @config[:log_count] || 5, @config[:log_size] || 10485760)))
         end
-        ActiveJob::Base.logger = nil
+        ActiveJob::Base.logger = @logger
       end
       if @config[:standalone]
         if defined?(ActiveSupport::BroadcastLogger)

@@ -3,6 +3,7 @@ module Skiplock
   class Cron
     def self.setup
       cronjobs = []
+      Rails.application.eager_load!
       ActiveJob::Base.descendants.each do |j|
         next unless j.const_defined?('CRON')
         cron = j.const_get('CRON')

@@ -108,7 +108,6 @@ module Skiplock
     def execute(purge_completion: true, max_retries: 20)
       raise 'Job has already been completed' if self.finished_at
       self.update_columns(running: true, updated_at: Time.now) unless self.running
-      Skiplock.logger.info("[Skiplock] Performing #{self.job_class} (#{self.id}) from queue '#{self.queue_name || 'default'}'...") if Skiplock.logger
       self.data ||= {}
       self.data.delete('result')
       self.exception_executions ||= {}
@@ -141,7 +140,6 @@ module Skiplock
             target, method_name = ::YAML.load(self.data['arguments'].first)
             job_name = "'#{target.name}.#{method_name}'"
           end
-          Skiplock.logger.info "[Skiplock] Performed #{job_name} (#{self.id}) from queue '#{self.queue_name || 'default'}' in #{end_time - start_time} seconds"
         end
       end
       self.exception || self.activejob_error || self.data['result']
